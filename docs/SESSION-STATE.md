@@ -30,6 +30,9 @@
 - Nothing mid-edit. Trunk green. Baseline commit 966c535 pushed to public repo
   **https://github.com/Toddoward/atelier** (branch `main`); CI matrix runs on push
   (Windows gate, Linux/macOS allowed-to-fail). Commit per spec going forward (CLAUDE.md).
+- CI fully green on all three platforms as of a2dda29 (Windows/macOS/Ubuntu — Ubuntu needed
+  eframe "x11"/"wayland" features for winit's Linux backends). R-12 cross-platform drift
+  now caught continuously.
 
 ### Next (in order)
 1. **Phase 2 — raster engine** (REQUIREMENTS RAS-1,2,4,5; DOC-3,8). Write spec 0003 from the
