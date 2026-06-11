@@ -27,8 +27,9 @@
   by kittest; `accesskit = "0.17"` is an atelier-app dev-dep (match Cargo.lock when bumping egui).
 
 ### In flight
-- Nothing mid-edit. Trunk green. Repo still has **no commits** (user hasn't asked; suggest a
-  baseline commit at next session start).
+- Nothing mid-edit. Trunk green. Baseline commit 966c535 pushed to public repo
+  **https://github.com/Toddoward/atelier** (branch `main`); CI matrix runs on push
+  (Windows gate, Linux/macOS allowed-to-fail). Commit per spec going forward (CLAUDE.md).
 
 ### Next (in order)
 1. **Phase 2 — raster engine** (REQUIREMENTS RAS-1,2,4,5; DOC-3,8). Write spec 0003 from the
