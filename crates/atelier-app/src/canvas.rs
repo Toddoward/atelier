@@ -125,9 +125,19 @@ fn paint_children(
             continue;
         }
         let opacity = opacity * node.props.opacity;
-        match &node.kind {
-            NodeKind::Group { .. } => paint_children(painter, rect, vp, editor, id, opacity),
-            NodeKind::Raster(art) | NodeKind::Vector(art) => {
+        // Until spec 0004 renders tiles on the GPU, raster/vector layers draw
+        // their placeholder rect.
+        let art = match &node.kind {
+            NodeKind::Group { .. } => {
+                paint_children(painter, rect, vp, editor, id, opacity);
+                continue;
+            }
+            NodeKind::Raster(content) => content.art,
+            NodeKind::Vector(art) => Some(*art),
+            _ => None,
+        };
+        if let Some(art) = art {
+            {
                 let r = doc_rect_to_screen(rect, vp, art.bounds);
                 let c = art.color;
                 let fill = egui::Color32::from_rgba_unmultiplied(
@@ -146,7 +156,6 @@ fn paint_children(
                     );
                 }
             }
-            _ => {}
         }
     }
 }

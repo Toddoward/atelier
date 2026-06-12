@@ -180,12 +180,12 @@ prop_command!(SetBlend, BlendMode, blend, "Blend Mode", merge: false);
 mod tests {
     use super::*;
     use crate::document::ProjectFocus;
-    use crate::node::{LayerProps, NodeKind, PlaceholderArt};
+    use crate::node::{LayerProps, NodeKind, PlaceholderArt, RasterContent};
 
     fn leaf(name: &str) -> Node {
         Node::new(
             LayerProps::named(name),
-            NodeKind::Raster(PlaceholderArt { bounds: [0.0; 4], color: [1.0; 4] }),
+            NodeKind::Raster(RasterContent::from_placeholder(PlaceholderArt { bounds: [0.0; 4], color: [1.0; 4] })),
         )
     }
 

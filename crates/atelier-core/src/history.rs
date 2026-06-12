@@ -130,12 +130,12 @@ impl Editor {
 mod tests {
     use super::*;
     use crate::command::{AddNode, SetOpacity};
-    use crate::node::{LayerProps, Node, NodeKind, PlaceholderArt};
+    use crate::node::{LayerProps, Node, NodeKind, PlaceholderArt, RasterContent};
 
     fn leaf(name: &str) -> Node {
         Node::new(
             LayerProps::named(name),
-            NodeKind::Raster(PlaceholderArt { bounds: [0.0; 4], color: [1.0; 4] }),
+            NodeKind::Raster(RasterContent::from_placeholder(PlaceholderArt { bounds: [0.0; 4], color: [1.0; 4] })),
         )
     }
 

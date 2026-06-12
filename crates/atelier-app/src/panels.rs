@@ -2,7 +2,7 @@
 
 use crate::EditorState;
 use atelier_core::command::{AddNode, MoveNode, RemoveNode, SetBlend, SetName, SetOpacity, SetVisible};
-use atelier_core::{BlendMode, LayerProps, Node, NodeId, NodeKind, PlaceholderArt};
+use atelier_core::{BlendMode, LayerProps, Node, NodeId, NodeKind, PlaceholderArt, RasterContent};
 
 const PALETTE: [[f32; 4]; 6] = [
     [0.86, 0.39, 0.35, 0.9],
@@ -222,10 +222,10 @@ fn new_layer(state: &EditorState) -> Node {
     let offset = 16.0 * ((n % 8) as f32);
     Node::new(
         LayerProps::named(format!("Layer {n}")),
-        NodeKind::Raster(PlaceholderArt {
+        NodeKind::Raster(RasterContent::from_placeholder(PlaceholderArt {
             bounds: [w * 0.1 + offset, h * 0.1 + offset, w * 0.5, h * 0.5],
             color: PALETTE[n % PALETTE.len()],
-        }),
+        })),
     )
 }
 

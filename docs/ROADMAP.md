@@ -6,13 +6,13 @@ spec's Verification Log). Do not start phase N+1 with phase N red.
 
 Status legend: ☐ not started · ◐ in progress · ☑ done
 
-Specs written so far: Phase 0 → `specs/0001-bootstrap-shell.md` · Phase 1 → `specs/0002-document-model.md`
+Specs written so far: Phase 0 → `specs/0001-bootstrap-shell.md` · Phase 1 → `specs/0002-document-model.md` · Phase 2 → `specs/0003-raster-tiles-cpu-compositor.md` (slice a; slices b/c = GPU parity 0004, brush/tools 0005)
 
 | # | Phase | Contents (req IDs) | Verify gate | Status |
 |---|-------|--------------------|-------------|--------|
 | 0 | Bootstrap | Workspace scaffold; window + wgpu surface + egui docked panels; CI (build+test, Win x64); empty canvas pan/zoom (SH-1..3) | `cargo build` + `cargo test` green; window opens; panels dock; canvas pans/zooms at 60 fps | ☑ |
 | 1 | Document model | Layer tree, groups, node kinds (stubs ok), command/undo, history panel, `.atl` save/load v0, layers panel UI (DOC-1..4,6,7) | Unit tests for tree ops + undo invariants; save→load→identical; manipulate layers in UI | ☑ |
-| 2 | Raster engine | Tile store, GPU compositor w/ full blend-mode set, CPU reference, brush/eraser, move/transform, crop/resize (RAS-1,2,4,5; DOC-3,8) | Golden CPU=GPU blend tests; paint+undo correct; 60 fps target doc | ☐ |
+| 2 | Raster engine | Tile store, GPU compositor w/ full blend-mode set, CPU reference, brush/eraser, move/transform, crop/resize (RAS-1,2,4,5; DOC-3,8) | Golden CPU=GPU blend tests; paint+undo correct; 60 fps target doc | ◐ |
 | 3 | Selections & adjustments | Selection tools+combine ops, quick mask, marching ants; core adjustments destructive + adjustment layers (RAS-3,6; DOC-1) | Mask op unit tests; visual checklist per tool; adjustment layer re-render correctness | ☐ |
 | 4 | Vector engine | Path model, pen/direct-select, shapes, fill/stroke, booleans, align, tessellated GPU render (VEC-1..7) | Boolean op test corpus; crisp zoom; editing checklist | ☐ |
 | 5 | Focus modes & interop | New-doc focus chooser, workspace presets, rasterize vector layer, place image, cross-paste (INT-1..4) | Interop checklist both directions | ☐ |

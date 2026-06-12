@@ -3,7 +3,33 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-12 (verification completion → Phases 0–1 DONE)
+## Last session: 2026-06-12-b (Phase 2 slice a — spec 0003 DONE)
+
+### Done this session
+- **Spec 0003 ☑** (raster engine slice a): `atelier-core::tile` (sparse 256² RGBA8 TileMap,
+  straight alpha), `NodeKind::Raster(RasterContent { art, tiles })` with placeholder-filled
+  tiles, `atelier-raster::blend` (all 28 blend modes, W3C formulas, deterministic Dissolve),
+  `atelier-raster::compositor` (CPU reference — THE source of truth for spec 0004 GPU
+  parity), `.atl` schema v1 (lz4 tile parts + v0 migration). 48 tests, clippy clean,
+  smoke run clean. Verification log in spec 0003.
+- ROADMAP Phase 2 stays ◐ (slice a of 3 done).
+
+### Next (in order)
+1. **Spec 0004 — GPU compositor parity** (write spec first): wgpu compute/render path
+   compositing visible tiles, golden tests CPU==GPU within 1 LSB (8-bit) on software
+   adapter (CI) + `#[ignore]`-gated hardware tests; canvas renders real tiles (replace
+   placeholder rect painting; drop `RasterContent.art` afterwards). Dissolve hash must
+   match `atelier-raster::blend::dissolve_keeps` exactly.
+2. **Spec 0005 — brush/eraser + move/transform + crop/resize** with pixel-diff undo
+   commands (Command pattern extends to tile edits) + kittest coverage.
+3. Then Phase 3 (selections & adjustments) per ROADMAP.
+
+### Watch out
+- `RasterContent.tiles` is `#[serde(skip)]` at field level — pixels only exist in .atl
+  binary parts; any new serialization path must reattach tiles (see io::atl loader).
+- PS golden fixtures still missing (R-04) — blend anchored to W3C hand-checks.
+
+## Previous session: 2026-06-12 (verification completion → Phases 0–1 DONE)
 
 ### Done this session
 - **Specs 0001 + 0002 fully verified and closed (☑). ROADMAP Phases 0 and 1 are ☑.**

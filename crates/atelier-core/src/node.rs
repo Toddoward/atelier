@@ -1,6 +1,7 @@
 //! Layer-tree nodes (DOC-1..4 model surface).
 
 use crate::blend::BlendMode;
+use crate::tile::TileMap;
 use serde::{Deserialize, Serialize};
 
 /// Stable node identity. Monotonic per document, never reused, survives
@@ -43,10 +44,44 @@ pub struct PlaceholderArt {
     pub color: [f32; 4],
 }
 
+/// Raster layer payload: sparse pixel tiles plus (transitional, until the GPU
+/// canvas renders tiles in spec 0004) the placeholder rect the egui canvas draws.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct RasterContent {
+    pub art: Option<PlaceholderArt>,
+    /// Pixels are stored as binary `.atl` parts, never in the JSON manifest;
+    /// the loader reattaches them after deserialization.
+    #[serde(skip)]
+    pub tiles: TileMap,
+}
+
+impl RasterContent {
+    /// Placeholder-backed layer whose tiles are filled to match the placeholder,
+    /// so the CPU compositor and the egui canvas show the same content.
+    pub fn from_placeholder(art: PlaceholderArt) -> Self {
+        let mut tiles = TileMap::new();
+        let [x, y, w, h] = art.bounds;
+        let rgba = [
+            (art.color[0] * 255.0).round() as u8,
+            (art.color[1] * 255.0).round() as u8,
+            (art.color[2] * 255.0).round() as u8,
+            (art.color[3] * 255.0).round() as u8,
+        ];
+        tiles.fill_rect(
+            x.round() as i32,
+            y.round() as i32,
+            (x + w).round() as i32,
+            (y + h).round() as i32,
+            rgba,
+        );
+        Self { art: Some(art), tiles }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     Group { expanded: bool },
-    Raster(PlaceholderArt),
+    Raster(RasterContent),
     Vector(PlaceholderArt),
     /// Stubs until their phases (3, 11, 10, 2): carry no data yet.
     Adjustment,

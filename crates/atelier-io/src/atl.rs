@@ -1,7 +1,10 @@
-//! `.atl` v0: ZIP container with a single `manifest.json` holding the
-//! schema-versioned document. See docs/FORMAT-ATL.md.
+//! `.atl` container: `manifest.json` (schema-versioned document JSON) plus,
+//! since schema v1, lz4-compressed binary tile parts
+//! `tiles/<node-id>/<tx>_<ty>.bin`. See docs/FORMAT-ATL.md.
+//!
+//! v0 files (manifest only, no pixels) still load.
 
-use atelier_core::Document;
+use atelier_core::{Document, NodeId, NodeKind, Tile};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -9,7 +12,7 @@ use std::path::Path;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-pub const SCHEMA_VERSION: u32 = 0;
+pub const SCHEMA_VERSION: u32 = 1;
 const MANIFEST: &str = "manifest.json";
 
 #[derive(Debug, thiserror::Error)]
@@ -22,6 +25,8 @@ pub enum AtlError {
     Manifest(#[from] serde_json::Error),
     #[error("file uses schema v{0}, this build reads up to v{SCHEMA_VERSION} — update Atelier")]
     VersionTooNew(u32),
+    #[error("malformed tile part \"{0}\"")]
+    BadTilePart(String),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -36,8 +41,20 @@ pub fn save_atl(doc: &Document, path: &Path) -> Result<(), AtlError> {
         document: serde_json::to_value(doc)?,
     };
     let mut zip = ZipWriter::new(File::create(path)?);
+    // Tile bytes are already lz4-compressed; don't deflate them again.
+    let stored = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zip.start_file(MANIFEST, SimpleFileOptions::default())?;
     zip.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
+
+    for (id, _) in doc.iter_tree() {
+        let Some(node) = doc.node(id) else { continue };
+        if let NodeKind::Raster(content) = &node.kind {
+            for (&(tx, ty), tile) in content.tiles.tiles() {
+                zip.start_file(format!("tiles/{}/{}_{}.bin", id.0, tx, ty), stored)?;
+                zip.write_all(&lz4_flex::compress_prepend_size(tile.bytes()))?;
+            }
+        }
+    }
     zip.finish()?;
     Ok(())
 }
@@ -50,14 +67,59 @@ pub fn load_atl(path: &Path) -> Result<Document, AtlError> {
     if manifest.schema_version > SCHEMA_VERSION {
         return Err(AtlError::VersionTooNew(manifest.schema_version));
     }
-    Ok(serde_json::from_value(manifest.document)?)
+    let mut doc_json = manifest.document;
+    if manifest.schema_version == 0 {
+        migrate_v0(&mut doc_json);
+    }
+    let mut doc: Document = serde_json::from_value(doc_json)?;
+
+    // Reattach tile parts (absent in v0 files — manifest alone is a valid doc).
+    let names: Vec<String> = zip.file_names().map(String::from).collect();
+    for name in names {
+        let Some(rest) = name.strip_prefix("tiles/") else { continue };
+        let parse = || -> Option<(NodeId, i32, i32)> {
+            let (id, coords) = rest.split_once('/')?;
+            let (tx, ty) = coords.strip_suffix(".bin")?.split_once('_')?;
+            Some((NodeId(id.parse().ok()?), tx.parse().ok()?, ty.parse().ok()?))
+        };
+        let (id, tx, ty) = parse().ok_or_else(|| AtlError::BadTilePart(name.clone()))?;
+
+        let mut compressed = Vec::new();
+        zip.by_name(&name)?.read_to_end(&mut compressed)?;
+        let bytes = lz4_flex::decompress_size_prepended(&compressed)
+            .map_err(|_| AtlError::BadTilePart(name.clone()))?;
+        let tile = Tile::from_bytes(bytes).map_err(|_| AtlError::BadTilePart(name.clone()))?;
+
+        match doc.node_mut(id).map(|n| &mut n.kind) {
+            Some(NodeKind::Raster(content)) => content.tiles.insert_tile((tx, ty), tile),
+            _ => return Err(AtlError::BadTilePart(name)),
+        }
+    }
+    Ok(doc)
+}
+
+/// v0 → v1: raster payload was a bare `PlaceholderArt`; v1 wraps it as
+/// `RasterContent { art, tiles }` (tiles live in binary parts, absent in v0).
+fn migrate_v0(doc_json: &mut serde_json::Value) {
+    let Some(nodes) = doc_json.get_mut("nodes").and_then(|n| n.as_object_mut()) else {
+        return;
+    };
+    for node in nodes.values_mut() {
+        let Some(raster) = node.get_mut("kind").and_then(|k| k.get_mut("Raster")) else {
+            continue;
+        };
+        if raster.get("art").is_none() {
+            let old = raster.take();
+            *raster = serde_json::json!({ "art": old });
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use atelier_core::command::AddNode;
-    use atelier_core::{Command, LayerProps, Node, NodeKind, PlaceholderArt, ProjectFocus};
+    use atelier_core::{Command, LayerProps, Node, NodeKind, PlaceholderArt, ProjectFocus, RasterContent};
 
     fn temp(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("atelier-test-{}-{name}.atl", std::process::id()))
@@ -70,7 +132,10 @@ mod tests {
         add_g.apply(&mut doc);
         let leaf = Node::new(
             LayerProps::named("layer 1"),
-            NodeKind::Raster(PlaceholderArt { bounds: [1.0, 2.0, 30.0, 40.0], color: [0.5; 4] }),
+            NodeKind::Raster(RasterContent::from_placeholder(PlaceholderArt {
+                bounds: [1.0, 2.0, 30.0, 40.0],
+                color: [0.5; 4],
+            })),
         );
         let mut add_l = AddNode::new(&mut doc, leaf, add_g.id, 0);
         add_l.apply(&mut doc);
@@ -85,6 +150,75 @@ mod tests {
         let loaded = load_atl(&path).unwrap();
         std::fs::remove_file(&path).ok();
         assert_eq!(doc, loaded);
+    }
+
+    #[test]
+    fn round_trip_preserves_pixels() {
+        let doc = sample_doc();
+        let path = temp("pixels");
+        save_atl(&doc, &path).unwrap();
+        let loaded = load_atl(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        // Find the raster layer and check a pixel inside its filled rect.
+        let (id, _) = doc.iter_tree().into_iter().nth(1).expect("layer present");
+        let NodeKind::Raster(content) = &loaded.node(id).unwrap().kind else {
+            panic!("raster node expected")
+        };
+        assert_eq!(content.tiles.pixel(5, 10), [128, 128, 128, 128]);
+        assert!(!content.tiles.is_empty());
+    }
+
+    /// A v0 file (manifest only, bare-PlaceholderArt raster payloads) still loads.
+    #[test]
+    fn loads_v0_schema_files() {
+        let doc = sample_doc();
+        // Build the v0 JSON shape from the current model: unwrap Raster.art.
+        let mut doc_json = serde_json::to_value(&doc).unwrap();
+        for node in doc_json["nodes"].as_object_mut().unwrap().values_mut() {
+            if let Some(raster) = node.get_mut("kind").and_then(|k| k.get_mut("Raster")) {
+                let art = raster["art"].take();
+                *raster = art;
+            }
+        }
+        let path = temp("v0");
+        let mut zip = ZipWriter::new(File::create(&path).unwrap());
+        zip.start_file(MANIFEST, SimpleFileOptions::default()).unwrap();
+        let manifest =
+            serde_json::json!({ "schema_version": 0, "document": doc_json }).to_string();
+        zip.write_all(manifest.as_bytes()).unwrap();
+        zip.finish().unwrap();
+
+        let loaded = load_atl(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(loaded.node_count(), doc.node_count());
+        let (id, _) = doc.iter_tree().into_iter().nth(1).expect("layer present");
+        let NodeKind::Raster(content) = &loaded.node(id).unwrap().kind else {
+            panic!("raster node expected")
+        };
+        assert!(content.art.is_some(), "placeholder art migrated");
+        assert!(content.tiles.is_empty(), "v0 carries no pixels");
+    }
+
+    #[test]
+    fn rejects_malformed_tile_part() {
+        let doc = sample_doc();
+        let path = temp("badtile");
+        // Valid v1 manifest + a garbage tile part.
+        let mut zip = ZipWriter::new(File::create(&path).unwrap());
+        zip.start_file(MANIFEST, SimpleFileOptions::default()).unwrap();
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "document": serde_json::to_value(&doc).unwrap()
+        })
+        .to_string();
+        zip.write_all(manifest.as_bytes()).unwrap();
+        zip.start_file("tiles/not-a-node.bin", SimpleFileOptions::default()).unwrap();
+        zip.write_all(b"junk").unwrap();
+        zip.finish().unwrap();
+
+        let err = load_atl(&path).unwrap_err();
+        std::fs::remove_file(&path).ok();
+        assert!(matches!(err, AtlError::BadTilePart(_)));
     }
 
     #[test]
