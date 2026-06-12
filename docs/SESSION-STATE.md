@@ -3,7 +3,30 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-12-c/d (Phase 2 slices b+c — specs 0004 AND 0005 DONE)
+## Last session: 2026-06-12-e (spec 0006 — **PHASE 2 COMPLETE ☑**)
+
+### Done
+- **Spec 0006 ☑** — `composite_region_rgba8` (region == slice-of-full, proven incl.
+  Dissolve absolute-coord hash + offsets); live brush strokes patch only their dirty rect
+  via `ImageDelta::partial` (no revision churn — commit is the single bump); pan/zoom
+  recomposite-free (test-proven).
+- **Phase 2 gate measured and passed** (release, dev box): 256² region over 50 layers =
+  18.6 ms (< 25 ms target); pan/zoom = texture redraw only. ROADMAP row 2 ☑.
+- **D-12**: Phase 2 closed via perf slice; free transform + crop tool + image resample
+  moved into Phase 3 contents; tablet pressure → future brush-dynamics spec.
+- 64 tests green, clippy clean, smoke clean.
+- Known debt logged in spec 0006: structural edits full-recomposite (6 s on 4096²×50
+  pathological doc) — GPU-canvas wiring + command-level dirty rects when it hurts.
+
+### Next
+1. **Phase 3 — selections & adjustments** (+ transform/crop/resample per D-12). Write
+   spec 0007 first. Suggested slicing: (a) selection model (8-bit mask + combine ops +
+   rect/ellipse/lasso tools + marching ants), (b) selection-clipped painting + adjustments
+   (levels/curves/etc., destructive first), (c) adjustment layers, (d) free transform +
+   crop + resample.
+2. Phase 4 (vector engine) after.
+
+## Previous session: 2026-06-12-c/d (Phase 2 slices b+c — specs 0004 AND 0005 DONE)
 
 ### Done
 - **Spec 0004 ☑** — GPU compute compositor (`atelier-gpu::compositor` + composite.wgsl):

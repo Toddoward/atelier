@@ -17,21 +17,23 @@
 use crate::blend::{blend_rgb, dissolve_keeps};
 use atelier_core::{BlendMode, Document, NodeId, NodeKind};
 
-/// f32 straight-alpha RGBA framebuffer.
+/// f32 straight-alpha RGBA framebuffer covering a doc-space rect.
 struct Buffer {
     w: usize,
     h: usize,
+    /// Doc coordinates of pixel (0,0) — region compositing (spec 0006).
+    origin: [i32; 2],
     /// `[r, g, b, a]` per pixel, row-major.
     px: Vec<[f32; 4]>,
 }
 
 impl Buffer {
-    fn transparent(w: usize, h: usize) -> Self {
-        Self { w, h, px: vec![[0.0; 4]; w * h] }
+    fn transparent(w: usize, h: usize, origin: [i32; 2]) -> Self {
+        Self { w, h, origin, px: vec![[0.0; 4]; w * h] }
     }
 }
 
-/// Per-pixel source fetch for one layer: returns straight-alpha RGBA.
+/// Per-pixel source fetch for one layer, in DOC coordinates.
 trait Source {
     fn sample(&self, x: i32, y: i32) -> [f32; 4];
 }
@@ -52,10 +54,11 @@ struct BufferSource<'a>(&'a Buffer);
 
 impl Source for BufferSource<'_> {
     fn sample(&self, x: i32, y: i32) -> [f32; 4] {
-        if x < 0 || y < 0 || x >= self.0.w as i32 || y >= self.0.h as i32 {
+        let (bx, by) = (x - self.0.origin[0], y - self.0.origin[1]);
+        if bx < 0 || by < 0 || bx >= self.0.w as i32 || by >= self.0.h as i32 {
             return [0.0; 4];
         }
-        self.0.px[y as usize * self.0.w + x as usize]
+        self.0.px[by as usize * self.0.w + bx as usize]
     }
 }
 
@@ -64,13 +67,17 @@ fn blend_onto(backdrop: &mut Buffer, src: &dyn Source, mode: BlendMode, opacity:
     for y in 0..backdrop.h {
         for x in 0..backdrop.w {
             let i = y * backdrop.w + x;
-            let s = src.sample(x as i32, y as i32);
+            // Absolute doc coordinates: sampling and the Dissolve hash must be
+            // region-invariant.
+            let dx = backdrop.origin[0] + x as i32;
+            let dy = backdrop.origin[1] + y as i32;
+            let s = src.sample(dx, dy);
             let (mut s_rgb, mut s_a) = ([s[0], s[1], s[2]], s[3] * opacity);
             let mut mode = mode;
 
             if mode == BlendMode::Dissolve {
                 // Dissolve: alpha becomes a per-pixel all-or-nothing gate.
-                if s[3] > 0.0 && dissolve_keeps(x as i32, y as i32, s_a) {
+                if s[3] > 0.0 && dissolve_keeps(dx, dy, s_a) {
                     s_a = 1.0;
                 } else {
                     s_a = 0.0;
@@ -124,7 +131,8 @@ fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
                 if props.blend == BlendMode::PassThrough && props.opacity >= 1.0 {
                     composite_children(doc, id, backdrop);
                 } else {
-                    let mut isolated = Buffer::transparent(backdrop.w, backdrop.h);
+                    let mut isolated =
+                        Buffer::transparent(backdrop.w, backdrop.h, backdrop.origin);
                     composite_children(doc, id, &mut isolated);
                     blend_onto(backdrop, &BufferSource(&isolated), props.blend, props.opacity);
                 }
@@ -138,7 +146,13 @@ fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
 /// Flatten the whole document to straight-alpha RGBA8, `width × height` from
 /// document origin.
 pub fn composite_rgba8(doc: &Document, width: u32, height: u32) -> Vec<u8> {
-    let mut backdrop = Buffer::transparent(width as usize, height as usize);
+    composite_region_rgba8(doc, 0, 0, width, height)
+}
+
+/// Composite only the doc-space rect `[x0, y0, x0+w, y0+h)` — identical pixels
+/// to the corresponding slice of the full composite (spec 0006).
+pub fn composite_region_rgba8(doc: &Document, x0: i32, y0: i32, w: u32, h: u32) -> Vec<u8> {
+    let mut backdrop = Buffer::transparent(w as usize, h as usize, [x0, y0]);
     composite_children(doc, doc.root(), &mut backdrop);
     let mut out = Vec::with_capacity(backdrop.px.len() * 4);
     for p in &backdrop.px {
@@ -300,6 +314,78 @@ mod tests {
             // u8 output is inherently in range; just ensure deterministic repeat.
             assert_eq!(out, composite_rgba8(&doc, 3, 3), "{mode:?} deterministic");
         }
+    }
+
+    /// Region composite must equal the slice of the full composite — including
+    /// Dissolve (absolute-coord hash) and offset layers.
+    #[test]
+    fn region_equals_slice_of_full() {
+        let mut doc = Document::new([96, 96], ProjectFocus::Raster);
+        let root = doc.root();
+        add(&mut doc, solid_layer("base", [0.0, 0.0, 96.0, 96.0], [0.3, 0.5, 0.7, 0.9]), root, 0);
+        let moved = add(
+            &mut doc,
+            solid_layer("moved", [0.0, 0.0, 40.0, 40.0], [0.9, 0.2, 0.1, 0.8]),
+            root,
+            0,
+        );
+        if let NodeKind::Raster(c) = &mut doc.node_mut(moved).unwrap().kind {
+            c.offset = [17, -5];
+        }
+        let dis = add(
+            &mut doc,
+            solid_layer("dis", [10.0, 10.0, 60.0, 60.0], [0.1, 0.9, 0.3, 1.0]),
+            root,
+            0,
+        );
+        doc.node_mut(dis).unwrap().props.blend = BlendMode::Dissolve;
+        doc.node_mut(dis).unwrap().props.opacity = 0.5;
+        let g = add(&mut doc, Node::group("g"), root, 0);
+        doc.node_mut(g).unwrap().props.opacity = 0.6; // isolated
+        doc.node_mut(g).unwrap().props.blend = BlendMode::Normal;
+        add(&mut doc, solid_layer("in", [30.0, 30.0, 50.0, 50.0], [1.0, 1.0, 0.2, 1.0]), g, 0);
+
+        let full = composite_rgba8(&doc, 96, 96);
+        let (rx, ry, rw, rh) = (23, 11, 41, 37);
+        let region = composite_region_rgba8(&doc, rx, ry, rw, rh);
+        for y in 0..rh as usize {
+            for x in 0..rw as usize {
+                let r = &region[(y * rw as usize + x) * 4..][..4];
+                let fy = y + ry as usize;
+                let fx = x + rx as usize;
+                let f = &full[(fy * 96 + fx) * 4..][..4];
+                assert_eq!(r, f, "mismatch at region ({x},{y})");
+            }
+        }
+    }
+
+    /// Perf evidence for the Phase 2 gate — run manually:
+    /// `cargo test -p atelier-raster --release -- --ignored --nocapture`
+    #[test]
+    #[ignore = "perf measurement; run locally in release"]
+    fn perf_numbers_for_phase2_gate() {
+        let mut doc = Document::new([4096, 4096], ProjectFocus::Raster);
+        let root = doc.root();
+        for i in 0..50 {
+            let x = (i % 8) as f32 * 450.0;
+            let y = (i / 8) as f32 * 550.0;
+            let id = add(
+                &mut doc,
+                solid_layer(&format!("l{i}"), [x, y, 512.0, 512.0], [0.5, 0.3, 0.8, 0.9]),
+                root,
+                0,
+            );
+            doc.node_mut(id).unwrap().props.blend =
+                BlendMode::ALL[2 + (i % 26) as usize];
+            doc.node_mut(id).unwrap().props.opacity = 0.8;
+        }
+        let t = std::time::Instant::now();
+        let _ = composite_region_rgba8(&doc, 1000, 1000, 256, 256);
+        println!("256x256 region over 50 layers: {:?}", t.elapsed());
+
+        let t = std::time::Instant::now();
+        let _ = composite_rgba8(&doc, 4096, 4096);
+        println!("full 4096x4096 x 50 layers: {:?}", t.elapsed());
     }
 
     #[test]

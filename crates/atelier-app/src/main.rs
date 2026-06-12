@@ -77,6 +77,9 @@ pub struct EditorState {
     pub tool: ActiveTool,
     pub brush: BrushSettings,
     pub stroke: Option<StrokeState>,
+    /// Doc-space rect the live stroke dirtied this frame — the canvas patches
+    /// just this region instead of recompositing the document (spec 0006).
+    pub dirty_patch: Option<[i32; 4]>,
 }
 
 impl EditorState {
@@ -198,6 +201,7 @@ impl AtelierApp {
                     tool: ActiveTool::Move,
                     brush: BrushSettings::default(),
                     stroke: None,
+                    dirty_patch: None,
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -386,6 +390,7 @@ impl AtelierApp {
                 tool: ActiveTool::Move,
                 brush: BrushSettings::default(),
                 stroke: None,
+                    dirty_patch: None,
             });
             self.viewport = Viewport::default();
         } else if cancel {
@@ -962,6 +967,74 @@ mod ui_tests {
         let st = h.state().state.as_ref().unwrap();
         let labels: Vec<String> = st.editor.history.undo_labels().collect();
         assert!(labels.iter().any(|l| l == "Eraser Stroke"), "eraser recorded: {labels:?}");
+    }
+
+    /// Spec 0006: live strokes patch the texture region instead of bumping the
+    /// revision every frame; the commit is the single revision bump.
+    #[test]
+    fn live_stroke_patches_without_revision_churn() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        click_label(&mut h, "Brush (B)");
+        let rev_before = h.state().state.as_ref().unwrap().editor.history.revision();
+
+        // Press and move WITHOUT releasing: live stroke in progress.
+        h.input_mut().events.push(egui::Event::PointerMoved(CANVAS_A));
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: CANVAS_A,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+        h.input_mut().events.push(egui::Event::PointerMoved(CANVAS_B));
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            assert!(st.stroke.is_some(), "stroke active");
+            assert_eq!(
+                st.editor.history.revision(),
+                rev_before,
+                "no revision churn during live stroke"
+            );
+            assert!(st.dirty_patch.is_none(), "canvas consumed the patch each frame");
+        }
+        // Release: one committed entry, one revision bump.
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: CANVAS_B,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+        h.run();
+        let st = h.state().state.as_ref().unwrap();
+        assert_eq!(st.editor.history.revision(), rev_before + 1, "commit bumps once");
+        assert!(!selected_raster(&h).tiles.is_empty(), "pixels landed");
+    }
+
+    /// Pan/zoom must never recomposite (Phase 2 gate: 60 fps is texture-redraw).
+    #[test]
+    fn pan_and_zoom_leave_composite_cache_untouched() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        h.run();
+        let rev = h.state().state.as_ref().unwrap().composite.as_ref().unwrap().0;
+
+        send(&mut h, egui::Event::PointerMoved(CANVAS_A));
+        send_key(&mut h, egui::Key::ArrowRight, egui::Modifiers::NONE);
+        send_key(&mut h, egui::Key::Equals, egui::Modifiers::COMMAND);
+        send_key(&mut h, egui::Key::ArrowDown, egui::Modifiers::NONE);
+
+        let st = h.state().state.as_ref().unwrap();
+        assert_ne!(h.state().viewport.zoom, 1.0, "zoom changed");
+        assert_eq!(
+            st.composite.as_ref().unwrap().0,
+            rev,
+            "viewport changes never recomposite"
+        );
     }
 
     #[test]

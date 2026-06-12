@@ -161,8 +161,8 @@ fn handle_tools(
                 let mut stroke =
                     StrokeState { layer: id, last: p, capture: Default::default(), erase };
                 stroke_segment(state_doc(state, id), p, p, &params, &mut stroke);
+                mark_dirty(state, p, p, off, params.radius);
                 state.stroke = Some(stroke);
-                state.editor.history.touch();
             } else if response.dragged_by(egui::PointerButton::Primary) {
                 let Some(mut stroke) = state.stroke.take() else { return };
                 if let Some(pos) = response.interact_pointer_pos() {
@@ -171,8 +171,8 @@ fn handle_tools(
                     let p = [doc[0] - off[0] as f32, doc[1] - off[1] as f32];
                     let last = stroke.last;
                     stroke_segment(state_doc(state, stroke.layer), last, p, &params, &mut stroke);
+                    mark_dirty(state, last, p, off, params.radius);
                     stroke.last = p;
-                    state.editor.history.touch();
                 }
                 state.stroke = Some(stroke);
             }
@@ -199,6 +199,22 @@ fn state_doc(state: &mut EditorState, id: NodeId) -> &mut atelier_core::TileMap 
         NodeKind::Raster(c) => &mut c.tiles,
         _ => unreachable!("editable_raster guards kind"),
     }
+}
+
+/// Union the segment's doc-space bbox (layer coords + offset, padded by the
+/// brush radius) into the frame's dirty-patch rect (spec 0006).
+fn mark_dirty(state: &mut EditorState, a: [f32; 2], b: [f32; 2], off: [i32; 2], radius: f32) {
+    let r = radius + 2.0;
+    let rect = [
+        (a[0].min(b[0]) - r).floor() as i32 + off[0],
+        (a[1].min(b[1]) - r).floor() as i32 + off[1],
+        (a[0].max(b[0]) + r).ceil() as i32 + off[0],
+        (a[1].max(b[1]) + r).ceil() as i32 + off[1],
+    ];
+    state.dirty_patch = Some(match state.dirty_patch {
+        None => rect,
+        Some(d) => [d[0].min(rect[0]), d[1].min(rect[1]), d[2].max(rect[2]), d[3].max(rect[3])],
+    });
 }
 
 /// Capture-then-stamp one segment.
@@ -238,6 +254,23 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
         let tex =
             ui.ctx().load_texture("doc-composite", image, egui::TextureOptions::NEAREST);
         state.composite = Some((rev, tex));
+    }
+
+    // Live-stroke partial update: recomposite only the dirtied region and
+    // patch it into the cached texture (spec 0006).
+    if let Some(d) = state.dirty_patch.take() {
+        let (x0, y0) = (d[0].max(0), d[1].max(0));
+        let (x1, y1) = (d[2].min(w as i32), d[3].min(h as i32));
+        if x1 > x0 && y1 > y0 {
+            let (pw, ph) = ((x1 - x0) as u32, (y1 - y0) as u32);
+            let rgba =
+                atelier_raster::compositor::composite_region_rgba8(&state.editor.doc, x0, y0, pw, ph);
+            let image =
+                egui::ColorImage::from_rgba_unmultiplied([pw as usize, ph as usize], &rgba);
+            if let Some((_, tex)) = &mut state.composite {
+                tex.set_partial([x0 as usize, y0 as usize], image, egui::TextureOptions::NEAREST);
+            }
+        }
     }
 
     let painter = ui.painter().with_clip_rect(rect);
