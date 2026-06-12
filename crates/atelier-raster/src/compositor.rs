@@ -139,7 +139,7 @@ pub fn composite_rgba8(doc: &Document, width: u32, height: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(backdrop.px.len() * 4);
     for p in &backdrop.px {
         for c in p {
-            out.push((c * 255.0 + 0.5).clamp(0.0, 255.0) as u8);
+            out.push(crate::quantize_rgba8(*c));
         }
     }
     out

@@ -11,6 +11,9 @@ pub struct History {
     /// While true, the next mergeable command coalesces with the top of the
     /// undo stack (one history entry per slider drag, not per frame).
     merging: bool,
+    /// Bumped on every document mutation (apply/undo/redo, merged or not) —
+    /// cheap cache key for recomposite/redraw decisions.
+    revision: u64,
 }
 
 impl Default for History {
@@ -21,12 +24,23 @@ impl Default for History {
 
 impl History {
     pub fn new(limit: usize) -> Self {
-        Self { undo: Vec::new(), redo: Vec::new(), limit: limit.max(1), merging: false }
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+            limit: limit.max(1),
+            merging: false,
+            revision: 0,
+        }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Apply `cmd` to `doc` and record it. Clears the redo stack.
     pub fn push_apply(&mut self, doc: &mut Document, mut cmd: Box<dyn Command>) {
         cmd.apply(doc);
+        self.revision += 1;
         self.redo.clear();
         if self.merging {
             if let Some(top) = self.undo.last_mut() {
@@ -49,6 +63,7 @@ impl History {
     pub fn undo(&mut self, doc: &mut Document) -> Option<String> {
         let mut cmd = self.undo.pop()?;
         cmd.revert(doc);
+        self.revision += 1;
         let label = cmd.label();
         self.redo.push(cmd);
         Some(label)
@@ -57,6 +72,7 @@ impl History {
     pub fn redo(&mut self, doc: &mut Document) -> Option<String> {
         let mut cmd = self.redo.pop()?;
         cmd.apply(doc);
+        self.revision += 1;
         let label = cmd.label();
         self.undo.push(cmd);
         Some(label)

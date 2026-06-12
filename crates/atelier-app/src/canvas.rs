@@ -1,11 +1,13 @@
-//! Canvas tab: checkerboard background (GPU callback) + Phase-1 placeholder
-//! layer rects painted with egui until the raster/vector engines land.
+//! Canvas tab: checkerboard background (GPU callback) + the composited
+//! document as a nearest-filtered texture, recomposited when the history
+//! revision changes (spec 0004).
 
+use crate::EditorState;
 use atelier_gpu::{CheckerParams, CheckerboardRenderer, Viewport};
-use atelier_core::{Editor, NodeId, NodeKind};
+use atelier_core::NodeKind;
 use eframe::egui_wgpu::{self, wgpu};
 
-pub fn canvas_ui(ui: &mut egui::Ui, viewport: &mut Viewport, editor: Option<&Editor>) {
+pub fn canvas_ui(ui: &mut egui::Ui, viewport: &mut Viewport, state: Option<&mut EditorState>) {
     let (rect, response) =
         ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
@@ -78,8 +80,8 @@ pub fn canvas_ui(ui: &mut egui::Ui, viewport: &mut Viewport, editor: Option<&Edi
     ui.painter()
         .add(egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { params }));
 
-    if let Some(editor) = editor {
-        paint_document_overlay(ui, rect, viewport, editor);
+    if let Some(state) = state {
+        paint_document(ui, rect, viewport, state);
     }
 }
 
@@ -93,12 +95,31 @@ fn doc_rect_to_screen(canvas: egui::Rect, vp: &Viewport, bounds: [f32; 4]) -> eg
     )
 }
 
-fn paint_document_overlay(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, editor: &Editor) {
-    let painter = ui.painter().with_clip_rect(rect);
-    let doc = &editor.doc;
+fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut EditorState) {
+    let [w, h] = state.editor.doc.size;
 
-    let doc_rect =
-        doc_rect_to_screen(rect, vp, [0.0, 0.0, doc.size[0] as f32, doc.size[1] as f32]);
+    // Recomposite only when the document actually changed.
+    let rev = state.editor.history.revision();
+    let stale = state.composite.as_ref().is_none_or(|(r, _)| *r != rev);
+    if stale {
+        let rgba = atelier_raster::composite_rgba8(&state.editor.doc, w, h);
+        let image =
+            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+        let tex =
+            ui.ctx().load_texture("doc-composite", image, egui::TextureOptions::NEAREST);
+        state.composite = Some((rev, tex));
+    }
+
+    let painter = ui.painter().with_clip_rect(rect);
+    let doc_rect = doc_rect_to_screen(rect, vp, [0.0, 0.0, w as f32, h as f32]);
+
+    let (_, tex) = state.composite.as_ref().expect("filled above");
+    painter.image(
+        tex.id(),
+        doc_rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
     painter.rect_stroke(
         doc_rect,
         0.0,
@@ -106,55 +127,21 @@ fn paint_document_overlay(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, editor
         egui::StrokeKind::Outside,
     );
 
-    paint_children(&painter, rect, vp, editor, doc.root(), 1.0);
-}
-
-/// Bottom-of-panel-list renders first (painter's algorithm): children vecs are
-/// top-first, so iterate in reverse.
-fn paint_children(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    vp: &Viewport,
-    editor: &Editor,
-    parent: NodeId,
-    opacity: f32,
-) {
-    for &id in editor.doc.children(parent).iter().rev() {
-        let Some(node) = editor.doc.node(id) else { continue };
-        if !node.props.visible {
-            continue;
-        }
-        let opacity = opacity * node.props.opacity;
-        // Until spec 0004 renders tiles on the GPU, raster/vector layers draw
-        // their placeholder rect.
-        let art = match &node.kind {
-            NodeKind::Group { .. } => {
-                paint_children(painter, rect, vp, editor, id, opacity);
-                continue;
-            }
-            NodeKind::Raster(content) => content.art,
-            NodeKind::Vector(art) => Some(*art),
-            _ => None,
-        };
-        if let Some(art) = art {
-            {
-                let r = doc_rect_to_screen(rect, vp, art.bounds);
-                let c = art.color;
-                let fill = egui::Color32::from_rgba_unmultiplied(
-                    (c[0] * 255.0) as u8,
-                    (c[1] * 255.0) as u8,
-                    (c[2] * 255.0) as u8,
-                    (c[3] * opacity * 255.0) as u8,
+    // Selected raster layer: coarse tile-bounds outline.
+    if let Some(node) = state.editor.selection.and_then(|id| state.editor.doc.node(id)) {
+        if let NodeKind::Raster(content) = &node.kind {
+            if let Some([x0, y0, x1, y1]) = content.tiles.bounds() {
+                let r = doc_rect_to_screen(
+                    rect,
+                    vp,
+                    [x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32],
                 );
-                painter.rect_filled(r, 2.0, fill);
-                if editor.selection == Some(id) {
-                    painter.rect_stroke(
-                        r,
-                        2.0,
-                        egui::Stroke::new(2.0, egui::Color32::from_rgb(90, 170, 255)),
-                        egui::StrokeKind::Outside,
-                    );
-                }
+                painter.rect_stroke(
+                    r,
+                    0.0,
+                    egui::Stroke::new(1.5, egui::Color32::from_rgb(90, 170, 255)),
+                    egui::StrokeKind::Outside,
+                );
             }
         }
     }

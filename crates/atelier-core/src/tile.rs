@@ -132,6 +132,22 @@ impl TileMap {
     pub fn prune_blank(&mut self) {
         self.tiles.retain(|_, t| !t.is_blank());
     }
+
+    /// Coarse content bounds in doc pixels `[x0, y0, x1, y1)` — tile
+    /// granularity (selection outlines, invalidation), None when empty.
+    pub fn bounds(&self) -> Option<[i32; 4]> {
+        let mut it = self.tiles.keys();
+        let &(tx, ty) = it.next()?;
+        let (mut x0, mut y0, mut x1, mut y1) = (tx, ty, tx, ty);
+        for &(tx, ty) in it {
+            x0 = x0.min(tx);
+            y0 = y0.min(ty);
+            x1 = x1.max(tx);
+            y1 = y1.max(ty);
+        }
+        let t = TILE_SIZE as i32;
+        Some([x0 * t, y0 * t, (x1 + 1) * t, (y1 + 1) * t])
+    }
 }
 
 #[cfg(test)]

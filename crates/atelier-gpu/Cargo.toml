@@ -9,3 +9,7 @@ atelier-core = { workspace = true }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 thiserror = { workspace = true }
+atelier-raster = { workspace = true }
+
+[dev-dependencies]
+pollster = "0.4"

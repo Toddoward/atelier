@@ -438,6 +438,7 @@ dependencies = [
  "atelier-core",
  "atelier-gpu",
  "atelier-io",
+ "atelier-raster",
  "eframe",
  "egui",
  "egui_dock",
@@ -468,7 +469,9 @@ name = "atelier-gpu"
 version = "0.1.0"
 dependencies = [
  "atelier-core",
+ "atelier-raster",
  "bytemuck",
+ "pollster",
  "thiserror 2.0.18",
  "wgpu",
 ]

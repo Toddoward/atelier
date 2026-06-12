@@ -8,6 +8,7 @@ license.workspace = true
 atelier-core = { workspace = true }
 atelier-gpu = { workspace = true }
 atelier-io = { workspace = true }
+atelier-raster = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_dock = { workspace = true }
@@ -19,3 +20,5 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 egui_kittest = { workspace = true }
 accesskit = "0.17"
+
+

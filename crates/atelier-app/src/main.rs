@@ -42,6 +42,8 @@ pub struct EditorState {
     pub path: Option<PathBuf>,
     /// In-progress rename in the Layers panel: (node, text buffer).
     pub rename: Option<(NodeId, String)>,
+    /// Cached document composite keyed by history revision (spec 0004).
+    pub composite: Option<(u64, egui::TextureHandle)>,
 }
 
 impl EditorState {
@@ -156,6 +158,7 @@ impl AtelierApp {
                     editor: Editor::from_document(doc),
                     path: Some(path),
                     rename: None,
+                    composite: None,
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -313,6 +316,7 @@ impl AtelierApp {
                 editor: Editor::new([dlg.width, dlg.height], dlg.focus),
                 path: None,
                 rename: None,
+                composite: None,
             });
             self.viewport = Viewport::default();
         } else if cancel {
@@ -452,7 +456,7 @@ impl egui_dock::TabViewer for TabContents<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Tab) {
         match tab {
             Tab::Canvas => {
-                canvas::canvas_ui(ui, self.viewport, self.state.as_ref().map(|s| &s.editor));
+                canvas::canvas_ui(ui, self.viewport, self.state.as_mut());
             }
             Tab::Tools => {
                 ui.label("Tools — Phase 2+");
@@ -523,9 +527,11 @@ mod ui_tests {
         h.run();
     }
 
-    /// Click through New Document dialog → Create.
+    /// Click through New Document dialog → Create. Small canvas so the
+    /// per-frame recomposite stays cheap in tests.
     fn create_doc(h: &mut Harness<'static, AtelierApp>) {
-        h.state_mut().request_new();
+        h.state_mut().new_doc =
+            Some(NewDocDialog { width: 64, height: 64, focus: ProjectFocus::Raster });
         h.run();
         click_label(h, "Create");
         assert!(h.state().state.is_some(), "document created via dialog");
@@ -739,6 +745,31 @@ mod ui_tests {
         // Ctrl+0 resets zoom to 100%.
         send_key(&mut h, egui::Key::Num0, egui::Modifiers::COMMAND);
         assert!((h.state().viewport.zoom - 1.0).abs() < 1e-4, "Ctrl+0 reset");
+    }
+
+    #[test]
+    fn composite_cache_follows_history_revision() {
+        let mut h = harness();
+        create_doc(&mut h);
+        h.run();
+        let rev_of = |h: &Harness<'static, AtelierApp>| {
+            h.state().state.as_ref().unwrap().composite.as_ref().map(|(r, _)| *r)
+        };
+        let rev0 = rev_of(&h);
+        assert!(rev0.is_some(), "canvas composited the empty doc");
+
+        click_label(&mut h, "+ Layer");
+        h.run();
+        let rev1 = rev_of(&h);
+        assert_ne!(rev0, rev1, "edit recomposited");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        h.run();
+        let rev2 = rev_of(&h);
+        assert_ne!(rev1, rev2, "undo recomposited");
+
+        h.run();
+        assert_eq!(rev2, rev_of(&h), "no edit → cache stable");
     }
 
     #[test]
