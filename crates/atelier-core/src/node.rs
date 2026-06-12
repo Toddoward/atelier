@@ -49,6 +49,10 @@ pub struct PlaceholderArt {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RasterContent {
     pub art: Option<PlaceholderArt>,
+    /// Layer position: tiles live in layer space, composited at doc
+    /// coordinates `tile_coord + offset` (move tool, spec 0005).
+    #[serde(default)]
+    pub offset: [i32; 2],
     /// Pixels are stored as binary `.atl` parts, never in the JSON manifest;
     /// the loader reattaches them after deserialization.
     #[serde(skip)]
@@ -74,7 +78,7 @@ impl RasterContent {
             (y + h).round() as i32,
             rgba,
         );
-        Self { art: Some(art), tiles }
+        Self { art: Some(art), offset: [0, 0], tiles }
     }
 }
 

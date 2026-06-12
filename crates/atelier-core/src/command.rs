@@ -176,6 +176,139 @@ prop_command!(SetVisible, bool, visible, "Toggle Visibility", merge: false);
 prop_command!(SetOpacity, f32, opacity, "Layer Opacity", merge: true);
 prop_command!(SetBlend, BlendMode, blend, "Blend Mode", merge: false);
 
+fn raster_content_mut(doc: &mut Document, id: NodeId) -> &mut crate::RasterContent {
+    match &mut doc.node_mut(id).expect("node present").kind {
+        crate::NodeKind::Raster(content) => content,
+        _ => panic!("raster command on non-raster node"),
+    }
+}
+
+/// Move a raster layer (offset in doc pixels). Mergeable: one history entry
+/// per move-tool drag.
+#[derive(Debug)]
+pub struct SetOffset {
+    pub id: NodeId,
+    pub old: [i32; 2],
+    pub new: [i32; 2],
+}
+
+impl SetOffset {
+    pub fn new(doc: &Document, id: NodeId, new: [i32; 2]) -> Self {
+        let old = match &doc.node(id).expect("node present").kind {
+            crate::NodeKind::Raster(c) => c.offset,
+            _ => panic!("raster command on non-raster node"),
+        };
+        Self { id, old, new }
+    }
+}
+
+impl Command for SetOffset {
+    fn label(&self) -> String {
+        "Move Layer".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        raster_content_mut(doc, self.id).offset = self.new;
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        raster_content_mut(doc, self.id).offset = self.old;
+    }
+    fn try_merge(&mut self, next: &dyn Any) -> bool {
+        if let Some(n) = next.downcast_ref::<Self>() {
+            if n.id == self.id {
+                self.new = n.new;
+                return true;
+            }
+        }
+        false
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Pixel edits captured as before/after tile snapshots. Built after the live
+/// stroke already mutated the tiles; record via `History::push_committed`.
+#[derive(Debug)]
+pub struct PaintTiles {
+    pub id: NodeId,
+    label: String,
+    /// (coord, tile before, tile after); None = tile absent.
+    diffs: Vec<(crate::TileCoord, Option<crate::Tile>, Option<crate::Tile>)>,
+}
+
+impl PaintTiles {
+    pub fn from_capture(
+        doc: &Document,
+        id: NodeId,
+        label: impl Into<String>,
+        before: impl IntoIterator<Item = (crate::TileCoord, Option<crate::Tile>)>,
+    ) -> Self {
+        let tiles = match &doc.node(id).expect("node present").kind {
+            crate::NodeKind::Raster(c) => &c.tiles,
+            _ => panic!("raster command on non-raster node"),
+        };
+        let diffs = before
+            .into_iter()
+            .map(|(coord, before)| (coord, before, tiles.tile_at(coord).cloned()))
+            .collect();
+        Self { id, label: label.into(), diffs }
+    }
+
+    fn restore(&self, doc: &mut Document, use_after: bool) {
+        let content = raster_content_mut(doc, self.id);
+        for (coord, before, after) in &self.diffs {
+            let tile = if use_after { after } else { before };
+            match tile {
+                Some(t) => content.tiles.insert_tile(*coord, t.clone()),
+                None => content.tiles.remove_tile(*coord),
+            }
+        }
+    }
+}
+
+impl Command for PaintTiles {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.restore(doc, true);
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        self.restore(doc, false);
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Document canvas resize (anchor top-left; no resampling — RAS-5 subset).
+#[derive(Debug)]
+pub struct CanvasResize {
+    pub old: [u32; 2],
+    pub new: [u32; 2],
+}
+
+impl CanvasResize {
+    pub fn new(doc: &Document, new: [u32; 2]) -> Self {
+        Self { old: doc.size, new }
+    }
+}
+
+impl Command for CanvasResize {
+    fn label(&self) -> String {
+        "Canvas Size".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        doc.size = self.new;
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        doc.size = self.old;
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

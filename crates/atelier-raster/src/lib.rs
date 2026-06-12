@@ -4,10 +4,12 @@
 //! (CLAUDE.md invariant, D-9).
 
 pub mod blend;
+pub mod brush;
 pub mod compositor;
 pub mod ops;
 
 pub use blend::{blend_rgb, dissolve_keeps};
+pub use brush::{segment_tiles, stamp_segment, BrushParams};
 pub use compositor::composite_rgba8;
 
 /// The one true f32 -> u8 quantization both compositors use.

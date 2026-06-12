@@ -36,11 +36,14 @@ trait Source {
     fn sample(&self, x: i32, y: i32) -> [f32; 4];
 }
 
-struct TileSource<'a>(&'a atelier_core::TileMap);
+struct TileSource<'a> {
+    tiles: &'a atelier_core::TileMap,
+    offset: [i32; 2],
+}
 
 impl Source for TileSource<'_> {
     fn sample(&self, x: i32, y: i32) -> [f32; 4] {
-        let [r, g, b, a] = self.0.pixel(x, y);
+        let [r, g, b, a] = self.tiles.pixel(x - self.offset[0], y - self.offset[1]);
         [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0]
     }
 }
@@ -114,7 +117,8 @@ fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
         let props = &node.props;
         match &node.kind {
             NodeKind::Raster(content) => {
-                blend_onto(backdrop, &TileSource(&content.tiles), props.blend, props.opacity);
+                let src = TileSource { tiles: &content.tiles, offset: content.offset };
+                blend_onto(backdrop, &src, props.blend, props.opacity);
             }
             NodeKind::Group { .. } => {
                 if props.blend == BlendMode::PassThrough && props.opacity >= 1.0 {

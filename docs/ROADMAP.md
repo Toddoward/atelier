@@ -6,7 +6,7 @@ spec's Verification Log). Do not start phase N+1 with phase N red.
 
 Status legend: ☐ not started · ◐ in progress · ☑ done
 
-Specs written so far: Phase 0 → `specs/0001-bootstrap-shell.md` · Phase 1 → `specs/0002-document-model.md` · Phase 2 → `specs/0003-raster-tiles-cpu-compositor.md` (slice a; slices b/c = GPU parity 0004, brush/tools 0005)
+Specs written so far: Phase 0 → 0001 ☑ · Phase 1 → 0002 ☑ · Phase 2 → 0003 ☑ (tiles/CPU compositor) + 0004 ☑ (GPU parity) + 0005 ☑ (brush/move/resize). Phase 2 remainder before its gate closes: free transform, crop tool, resample, tablet pressure, GPU-canvas wiring + dirty-rect (60 fps gate item).
 
 | # | Phase | Contents (req IDs) | Verify gate | Status |
 |---|-------|--------------------|-------------|--------|

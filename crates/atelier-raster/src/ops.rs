@@ -6,8 +6,8 @@ use atelier_core::{BlendMode, Document, NodeId, NodeKind, TileMap};
 
 #[derive(Debug)]
 pub enum CompositeOp<'a> {
-    /// Composite a raster layer's tiles onto the current stack top.
-    Layer { tiles: &'a TileMap, mode: BlendMode, opacity: f32 },
+    /// Composite a raster layer's tiles (drawn at `offset`) onto the stack top.
+    Layer { tiles: &'a TileMap, offset: [i32; 2], mode: BlendMode, opacity: f32 },
     /// Open an isolated transparent buffer (non-pass-through group).
     Push,
     /// Blend the isolated buffer onto the previous top and discard it.
@@ -32,6 +32,7 @@ fn walk<'a>(doc: &'a Document, parent: NodeId, ops: &mut Vec<CompositeOp<'a>>) {
             NodeKind::Raster(content) => {
                 ops.push(CompositeOp::Layer {
                     tiles: &content.tiles,
+                    offset: content.offset,
                     mode: props.blend,
                     opacity: props.opacity,
                 });

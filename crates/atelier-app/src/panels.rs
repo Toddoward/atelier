@@ -13,6 +13,45 @@ const PALETTE: [[f32; 4]; 6] = [
     [0.38, 0.72, 0.70, 0.9],
 ];
 
+pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
+    use crate::ActiveTool;
+    for (tool, label) in [
+        (ActiveTool::Move, "Move (V)"),
+        (ActiveTool::Brush, "Brush (B)"),
+        (ActiveTool::Eraser, "Eraser (E)"),
+    ] {
+        if ui.selectable_label(state.tool == tool, label).clicked() {
+            state.tool = tool;
+        }
+    }
+    if matches!(state.tool, ActiveTool::Brush | ActiveTool::Eraser) {
+        ui.separator();
+        ui.label("Size");
+        ui.add(egui::Slider::new(&mut state.brush.radius, 1.0..=256.0).logarithmic(true));
+        ui.label("Hardness");
+        ui.add(egui::Slider::new(&mut state.brush.hardness, 0.0..=1.0));
+        if state.tool == ActiveTool::Brush {
+            ui.label("Color");
+            let mut rgba = egui::Rgba::from_rgba_unmultiplied(
+                state.brush.color[0],
+                state.brush.color[1],
+                state.brush.color[2],
+                state.brush.color[3],
+            );
+            if egui::color_picker::color_edit_button_rgba(
+                ui,
+                &mut rgba,
+                egui::color_picker::Alpha::OnlyBlend,
+            )
+            .changed()
+            {
+                let [r, g, b, a] = rgba.to_rgba_unmultiplied();
+                state.brush.color = [r, g, b, a];
+            }
+        }
+    }
+}
+
 pub fn layers_ui(ui: &mut egui::Ui, state: &mut EditorState) {
     toolbar(ui, state);
     ui.separator();

@@ -2,9 +2,11 @@
 //! document as a nearest-filtered texture, recomposited when the history
 //! revision changes (spec 0004).
 
-use crate::EditorState;
+use crate::{ActiveTool, EditorState, StrokeState};
+use atelier_core::command::{PaintTiles, SetOffset};
+use atelier_core::{NodeId, NodeKind};
 use atelier_gpu::{CheckerParams, CheckerboardRenderer, Viewport};
-use atelier_core::NodeKind;
+use atelier_raster::BrushParams;
 use eframe::egui_wgpu::{self, wgpu};
 
 pub fn canvas_ui(ui: &mut egui::Ui, viewport: &mut Viewport, state: Option<&mut EditorState>) {
@@ -81,8 +83,136 @@ pub fn canvas_ui(ui: &mut egui::Ui, viewport: &mut Viewport, state: Option<&mut 
         .add(egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { params }));
 
     if let Some(state) = state {
+        if !space_down {
+            handle_tools(ui, rect, &response, viewport, state);
+        }
         paint_document(ui, rect, viewport, state);
     }
+}
+
+/// Selected raster layer that can take pixel edits right now.
+fn editable_raster(state: &EditorState) -> Option<NodeId> {
+    let id = state.editor.selection?;
+    let node = state.editor.doc.node(id)?;
+    let editable = matches!(node.kind, NodeKind::Raster(_))
+        && node.props.visible
+        && !node.props.locked;
+    editable.then_some(id)
+}
+
+fn raster_offset(state: &EditorState, id: NodeId) -> [i32; 2] {
+    match &state.editor.doc.node(id).expect("checked").kind {
+        NodeKind::Raster(c) => c.offset,
+        _ => [0, 0],
+    }
+}
+
+fn handle_tools(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    response: &egui::Response,
+    vp: &Viewport,
+    state: &mut EditorState,
+) {
+    let _ = ui;
+    let pointer_doc = |pos: egui::Pos2| {
+        vp.screen_to_doc([pos.x - rect.min.x, pos.y - rect.min.y])
+    };
+
+    match state.tool {
+        ActiveTool::Move => {
+            let Some(id) = editable_raster(state) else { return };
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                state.editor.history.set_merging(true);
+            }
+            if response.dragged_by(egui::PointerButton::Primary) {
+                let d = response.drag_delta();
+                if d != egui::Vec2::ZERO {
+                    let old = raster_offset(state, id);
+                    let new = [
+                        old[0] + (d.x / vp.zoom).round() as i32,
+                        old[1] + (d.y / vp.zoom).round() as i32,
+                    ];
+                    if new != old {
+                        let cmd = SetOffset::new(&state.editor.doc, id, new);
+                        state.editor.apply(Box::new(cmd));
+                    }
+                }
+            }
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                state.editor.history.set_merging(false);
+            }
+        }
+        ActiveTool::Brush | ActiveTool::Eraser => {
+            let erase = state.tool == ActiveTool::Eraser;
+            let params = BrushParams {
+                radius: state.brush.radius,
+                hardness: state.brush.hardness,
+                color: state.brush.color,
+                erase,
+            };
+
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                let Some(id) = editable_raster(state) else { return };
+                let Some(pos) = response.interact_pointer_pos() else { return };
+                let doc = pointer_doc(pos);
+                let off = raster_offset(state, id);
+                let p = [doc[0] - off[0] as f32, doc[1] - off[1] as f32];
+                let mut stroke =
+                    StrokeState { layer: id, last: p, capture: Default::default(), erase };
+                stroke_segment(state_doc(state, id), p, p, &params, &mut stroke);
+                state.stroke = Some(stroke);
+                state.editor.history.touch();
+            } else if response.dragged_by(egui::PointerButton::Primary) {
+                let Some(mut stroke) = state.stroke.take() else { return };
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let off = raster_offset(state, stroke.layer);
+                    let doc = pointer_doc(pos);
+                    let p = [doc[0] - off[0] as f32, doc[1] - off[1] as f32];
+                    let last = stroke.last;
+                    stroke_segment(state_doc(state, stroke.layer), last, p, &params, &mut stroke);
+                    stroke.last = p;
+                    state.editor.history.touch();
+                }
+                state.stroke = Some(stroke);
+            }
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                if let Some(stroke) = state.stroke.take() {
+                    let label = if stroke.erase { "Eraser Stroke" } else { "Brush Stroke" };
+                    let cmd = PaintTiles::from_capture(
+                        &state.editor.doc,
+                        stroke.layer,
+                        label,
+                        stroke.capture,
+                    );
+                    state.editor.history.push_committed(Box::new(cmd));
+                }
+            }
+        }
+    }
+}
+
+/// Mutable access to a raster layer's tiles (live-stroke path; the committed
+/// PaintTiles command preserves undo integrity — spec 0005 design note).
+fn state_doc(state: &mut EditorState, id: NodeId) -> &mut atelier_core::TileMap {
+    match &mut state.editor.doc.node_mut(id).expect("layer exists").kind {
+        NodeKind::Raster(c) => &mut c.tiles,
+        _ => unreachable!("editable_raster guards kind"),
+    }
+}
+
+/// Capture-then-stamp one segment.
+fn stroke_segment(
+    tiles: &mut atelier_core::TileMap,
+    from: [f32; 2],
+    to: [f32; 2],
+    params: &BrushParams,
+    stroke: &mut StrokeState,
+) {
+    for coord in atelier_raster::segment_tiles(from, to, params.radius) {
+        stroke.capture.entry(coord).or_insert_with(|| tiles.tile_at(coord).cloned());
+    }
+    atelier_raster::stamp_segment(tiles, from, to, params);
 }
 
 /// Map a document-space rect to screen space within the canvas rect.
@@ -131,10 +261,11 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
     if let Some(node) = state.editor.selection.and_then(|id| state.editor.doc.node(id)) {
         if let NodeKind::Raster(content) = &node.kind {
             if let Some([x0, y0, x1, y1]) = content.tiles.bounds() {
+                let [ox, oy] = content.offset;
                 let r = doc_rect_to_screen(
                     rect,
                     vp,
-                    [x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32],
+                    [(x0 + ox) as f32, (y0 + oy) as f32, (x1 - x0) as f32, (y1 - y0) as f32],
                 );
                 painter.rect_stroke(
                     r,

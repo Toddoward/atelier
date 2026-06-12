@@ -142,13 +142,26 @@ impl GpuCompositor {
 
                 for op in &ops {
                     match op {
-                        CompositeOp::Layer { tiles, mode, opacity } => {
-                            let Some(tile) = tiles.tile_at((tx as i32, ty as i32)) else {
-                                continue; // absent tile = fully transparent source
+                        CompositeOp::Layer { tiles, offset, mode, opacity } => {
+                            // Offset layers get a CPU-extracted shifted tile.
+                            let shifted;
+                            let bytes = if *offset == [0, 0] {
+                                match tiles.tile_at((tx as i32, ty as i32)) {
+                                    Some(t) => t.bytes(),
+                                    None => continue, // transparent source
+                                }
+                            } else {
+                                match tiles.extract_shifted(tx as i32, ty as i32, *offset) {
+                                    Some(t) => {
+                                        shifted = t;
+                                        shifted.bytes()
+                                    }
+                                    None => continue,
+                                }
                             };
                             let src = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                 label: Some("src tile"),
-                                contents: tile.bytes(),
+                                contents: bytes,
                                 usage: wgpu::BufferUsages::STORAGE,
                             });
                             let params = params_buf(mode_index(*mode), *opacity, origin);

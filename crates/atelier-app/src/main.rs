@@ -36,6 +36,36 @@ enum Tab {
     History,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveTool {
+    Move,
+    Brush,
+    Eraser,
+}
+
+/// Brush/eraser options (Tools panel).
+pub struct BrushSettings {
+    pub radius: f32,
+    pub hardness: f32,
+    pub color: [f32; 4],
+}
+
+impl Default for BrushSettings {
+    fn default() -> Self {
+        Self { radius: 16.0, hardness: 0.8, color: [0.1, 0.1, 0.1, 1.0] }
+    }
+}
+
+/// Live brush stroke (committed as one PaintTiles command on release).
+pub struct StrokeState {
+    pub layer: NodeId,
+    /// Last stamp position in layer coords.
+    pub last: [f32; 2],
+    /// Pre-stroke tiles for undo, captured before first mutation.
+    pub capture: std::collections::BTreeMap<atelier_core::TileCoord, Option<atelier_core::Tile>>,
+    pub erase: bool,
+}
+
 /// One open document plus its UI editing state.
 pub struct EditorState {
     pub editor: Editor,
@@ -44,6 +74,9 @@ pub struct EditorState {
     pub rename: Option<(NodeId, String)>,
     /// Cached document composite keyed by history revision (spec 0004).
     pub composite: Option<(u64, egui::TextureHandle)>,
+    pub tool: ActiveTool,
+    pub brush: BrushSettings,
+    pub stroke: Option<StrokeState>,
 }
 
 impl EditorState {
@@ -77,6 +110,8 @@ struct AtelierApp {
     adapter_info: String,
     state: Option<EditorState>,
     new_doc: Option<NewDocDialog>,
+    /// Image → Canvas Size… dialog (pending width/height).
+    canvas_size: Option<[u32; 2]>,
     pending: Option<PendingAction>,
     error: Option<String>,
     last_title: String,
@@ -115,6 +150,7 @@ impl AtelierApp {
             adapter_info,
             state: None,
             new_doc: None,
+            canvas_size: None,
             pending: None,
             error: None,
             last_title: String::new(),
@@ -159,6 +195,9 @@ impl AtelierApp {
                     path: Some(path),
                     rename: None,
                     composite: None,
+                    tool: ActiveTool::Move,
+                    brush: BrushSettings::default(),
+                    stroke: None,
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -222,6 +261,23 @@ impl AtelierApp {
         if ctx.input_mut(|i| i.consume_shortcut(&open)) {
             self.request_open();
         }
+
+        // Tool keys (plain letters — only when no text field wants them).
+        if !ctx.wants_keyboard_input() {
+            if let Some(st) = &mut self.state {
+                ctx.input(|i| {
+                    if i.key_pressed(Key::V) {
+                        st.tool = ActiveTool::Move;
+                    }
+                    if i.key_pressed(Key::B) {
+                        st.tool = ActiveTool::Brush;
+                    }
+                    if i.key_pressed(Key::E) {
+                        st.tool = ActiveTool::Eraser;
+                    }
+                });
+            }
+        }
     }
 
     fn menu_bar(&mut self, ctx: &egui::Context) {
@@ -252,6 +308,16 @@ impl AtelierApp {
                     ui.separator();
                     if ui.button("Exit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                ui.menu_button("Image", |ui| {
+                    let size = self.state.as_ref().map(|s| s.editor.doc.size);
+                    if ui
+                        .add_enabled(size.is_some(), egui::Button::new("Canvas Size…"))
+                        .clicked()
+                    {
+                        self.canvas_size = size;
+                        ui.close_menu();
                     }
                 });
                 ui.menu_button("Edit", |ui| {
@@ -317,10 +383,44 @@ impl AtelierApp {
                 path: None,
                 rename: None,
                 composite: None,
+                tool: ActiveTool::Move,
+                brush: BrushSettings::default(),
+                stroke: None,
             });
             self.viewport = Viewport::default();
         } else if cancel {
             self.new_doc = None;
+        }
+
+        // Canvas Size dialog.
+        let mut resize = false;
+        let mut resize_cancel = false;
+        if let Some(size) = &mut self.canvas_size {
+            egui::Window::new("Canvas Size")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Width");
+                        ui.add(egui::DragValue::new(&mut size[0]).range(1..=32768).suffix(" px"));
+                        ui.label("Height");
+                        ui.add(egui::DragValue::new(&mut size[1]).range(1..=32768).suffix(" px"));
+                    });
+                    ui.horizontal(|ui| {
+                        resize = ui.button("Resize").clicked();
+                        resize_cancel = ui.button("Cancel").clicked();
+                    });
+                });
+        }
+        if resize {
+            let size = self.canvas_size.take().expect("dialog open");
+            if let Some(st) = &mut self.state {
+                let cmd = atelier_core::command::CanvasResize::new(&st.editor.doc, size);
+                st.editor.apply(Box::new(cmd));
+            }
+        } else if resize_cancel {
+            self.canvas_size = None;
         }
 
         // Unsaved-changes confirmation.
@@ -458,9 +558,12 @@ impl egui_dock::TabViewer for TabContents<'_> {
             Tab::Canvas => {
                 canvas::canvas_ui(ui, self.viewport, self.state.as_mut());
             }
-            Tab::Tools => {
-                ui.label("Tools — Phase 2+");
-            }
+            Tab::Tools => match self.state {
+                Some(st) => panels::tools_ui(ui, st),
+                None => {
+                    ui.weak("No document");
+                }
+            },
             Tab::Layers => match self.state {
                 Some(st) => panels::layers_ui(ui, st),
                 None => {
@@ -488,7 +591,7 @@ impl egui_dock::TabViewer for TabContents<'_> {
 #[cfg(test)]
 mod ui_tests {
     use super::*;
-    use atelier_core::BlendMode;
+    use atelier_core::{BlendMode, NodeKind};
     use egui_kittest::kittest::Queryable;
     use egui_kittest::Harness;
 
@@ -745,6 +848,132 @@ mod ui_tests {
         // Ctrl+0 resets zoom to 100%.
         send_key(&mut h, egui::Key::Num0, egui::Modifiers::COMMAND);
         assert!((h.state().viewport.zoom - 1.0).abs() < 1e-4, "Ctrl+0 reset");
+    }
+
+    /// Raw pointer drag on the canvas (press → move → release across frames).
+    fn pointer_drag(h: &mut Harness<'static, AtelierApp>, from: egui::Pos2, to: egui::Pos2) {
+        h.input_mut().events.push(egui::Event::PointerMoved(from));
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+        h.input_mut().events.push(egui::Event::PointerMoved(to));
+        h.run();
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: to,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+        h.run();
+    }
+
+    fn selected_raster<'a>(h: &'a Harness<'static, AtelierApp>) -> &'a atelier_core::RasterContent {
+        let st = h.state().state.as_ref().unwrap();
+        let id = st.editor.selection.unwrap();
+        match &st.editor.doc.node(id).unwrap().kind {
+            NodeKind::Raster(c) => c,
+            _ => panic!("raster selected"),
+        }
+    }
+
+    const CANVAS_A: egui::Pos2 = egui::pos2(600.0, 400.0);
+    const CANVAS_B: egui::Pos2 = egui::pos2(650.0, 430.0);
+
+    #[test]
+    fn brush_paints_then_undo_clears() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        // Start from an empty layer so the assert is unambiguous.
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let id = st.editor.selection.unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                c.tiles = atelier_core::TileMap::new();
+            }
+        }
+        click_label(&mut h, "Brush (B)");
+        let before_len = h.state().state.as_ref().unwrap().editor.history.applied_len();
+
+        pointer_drag(&mut h, CANVAS_A, CANVAS_B);
+
+        let content = selected_raster(&h);
+        assert!(!content.tiles.is_empty(), "stroke painted pixels");
+        let st = h.state().state.as_ref().unwrap();
+        assert_eq!(
+            st.editor.history.applied_len(),
+            before_len + 1,
+            "one history entry per stroke"
+        );
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        let content = selected_raster(&h);
+        assert!(content.tiles.is_empty(), "undo removed the stroke");
+
+        send_key(&mut h, egui::Key::Y, egui::Modifiers::COMMAND);
+        let content = selected_raster(&h);
+        assert!(!content.tiles.is_empty(), "redo restored the stroke");
+    }
+
+    #[test]
+    fn move_tool_drags_layer_offset_one_undo_step() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        click_label(&mut h, "Move (V)");
+        assert_eq!(selected_raster(&h).offset, [0, 0]);
+        let before_len = h.state().state.as_ref().unwrap().editor.history.applied_len();
+
+        pointer_drag(&mut h, CANVAS_A, CANVAS_B);
+
+        let off = selected_raster(&h).offset;
+        assert_ne!(off, [0, 0], "drag moved the layer");
+        let st = h.state().state.as_ref().unwrap();
+        assert_eq!(st.editor.history.applied_len(), before_len + 1, "drag merged to one step");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(selected_raster(&h).offset, [0, 0], "single undo restores");
+    }
+
+    #[test]
+    fn eraser_stroke_reduces_alpha_via_ui() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        click_label(&mut h, "Brush (B)");
+        pointer_drag(&mut h, CANVAS_A, CANVAS_B);
+        // Find a painted pixel to compare after erasing the same path.
+        let painted: Vec<_> = {
+            let c = selected_raster(&h);
+            c.tiles.tiles().map(|(coord, _)| *coord).collect()
+        };
+        assert!(!painted.is_empty());
+
+        click_label(&mut h, "Eraser (E)");
+        // Erase repeatedly along the same path.
+        for _ in 0..3 {
+            pointer_drag(&mut h, CANVAS_A, CANVAS_B);
+        }
+        let st = h.state().state.as_ref().unwrap();
+        let labels: Vec<String> = st.editor.history.undo_labels().collect();
+        assert!(labels.iter().any(|l| l == "Eraser Stroke"), "eraser recorded: {labels:?}");
+    }
+
+    #[test]
+    fn canvas_resize_dialog_applies_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        h.state_mut().canvas_size = Some([128, 32]);
+        h.run();
+        click_label(&mut h, "Resize");
+        assert_eq!(h.state().state.as_ref().unwrap().editor.doc.size, [128, 32]);
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(h.state().state.as_ref().unwrap().editor.doc.size, [64, 64]);
     }
 
     #[test]

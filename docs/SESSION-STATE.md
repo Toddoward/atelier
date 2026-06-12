@@ -3,7 +3,37 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-12-b (Phase 2 slice a — spec 0003 DONE)
+## Last session: 2026-06-12-c/d (Phase 2 slices b+c — specs 0004 AND 0005 DONE)
+
+### Done
+- **Spec 0004 ☑** — GPU compute compositor (`atelier-gpu::compositor` + composite.wgsl):
+  full blend-mode set in WGSL, isolation stack, shared op list
+  (`atelier-raster::ops`). Golden parity on RTX 3060: **bit-exact**, 0 bytes differ across
+  8 fixture docs (gate was ≤1 LSB); Dissolve hash matches exactly. Canvas now renders the
+  real composited document (CPU composite → egui texture, cached by `History::revision`);
+  placeholder painting removed.
+- **Spec 0005 ☑** — brush/eraser (`atelier-raster::brush`: smoothstep hardness, spaced
+  stamps, src-over/erase), move tool (`RasterContent.offset` + mergeable `SetOffset`),
+  Canvas Size dialog (`CanvasResize`), live-stroke → one `PaintTiles` undo entry via new
+  `History::push_committed`; `History::touch()` for live-preview recomposite; Tools panel
+  real (V/B/E shortcuts, size/hardness/color); both compositors honor offsets
+  (GPU via `TileMap::extract_shifted`, golden tests extended, still bit-exact).
+- Gates: **61 tests** green, clippy clean, smoke run clean. Verification logs in both specs.
+
+### Next
+1. Phase 2 remainder (one more spec): free transform, crop tool, resample, pressure,
+   GPU-canvas wiring + dirty-rect recomposite → then measure the 60 fps gate and flip
+   Phase 2 ☑. OR jump to Phase 3 (selections) first if transform work is better after
+   masks exist — decide at spec-writing time, record as D-12.
+2. Phase 3 (selections & adjustments) per ROADMAP.
+
+### Watch out (additions)
+- WGSL mode indices are hand-numbered to match `BlendMode::ALL` order — change together
+  (spec 0004 notes).
+- Live brush stroke is the second sanctioned direct-mutation exception (commit on release);
+  any new tool must follow the same capture→mutate→push_committed pattern.
+
+## Previous session: 2026-06-12-b (Phase 2 slice a — spec 0003 DONE)
 
 ### Done this session
 - **Spec 0003 ☑** (raster engine slice a): `atelier-core::tile` (sparse 256² RGBA8 TileMap,

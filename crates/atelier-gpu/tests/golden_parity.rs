@@ -44,7 +44,11 @@ fn add(doc: &mut Document, node: Node, parent: NodeId) -> NodeId {
 }
 
 fn random_layer(rng: &mut Lcg, name: &str, w: u32, h: u32) -> Node {
-    let mut content = RasterContent::default();
+    let mut content = RasterContent {
+        // Random layer offset (move tool, spec 0005) — exercises shifted sampling.
+        offset: [rng.range(129) as i32 - 64, rng.range(129) as i32 - 64],
+        ..Default::default()
+    };
     // 1-3 random filled rects with random colors/alphas.
     for _ in 0..(1 + rng.range(3)) {
         let x0 = rng.range(w) as i32;

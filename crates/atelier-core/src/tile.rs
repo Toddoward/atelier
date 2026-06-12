@@ -99,6 +99,10 @@ impl TileMap {
         self.tiles.insert(coord, tile);
     }
 
+    pub fn remove_tile(&mut self, coord: TileCoord) {
+        self.tiles.remove(&coord);
+    }
+
     fn split(doc_x: i32, doc_y: i32) -> (TileCoord, usize, usize) {
         let tx = doc_x.div_euclid(TILE_SIZE as i32);
         let ty = doc_y.div_euclid(TILE_SIZE as i32);
@@ -131,6 +135,33 @@ impl TileMap {
     /// Drop tiles that are fully transparent (sparseness maintenance).
     pub fn prune_blank(&mut self) {
         self.tiles.retain(|_, t| !t.is_blank());
+    }
+
+    /// Extract the 256² region that lands on doc-tile `(tx, ty)` when this map
+    /// is drawn at `offset` — i.e. source pixels `doc - offset`. None when the
+    /// region touches no stored tile (fully transparent).
+    pub fn extract_shifted(&self, tx: i32, ty: i32, offset: [i32; 2]) -> Option<Tile> {
+        let t = TILE_SIZE as i32;
+        let (dx0, dy0) = (tx * t, ty * t);
+        // Which source tiles can contribute?
+        let sx0 = (dx0 - offset[0]).div_euclid(t);
+        let sy0 = (dy0 - offset[1]).div_euclid(t);
+        let any = (sx0..=sx0 + 1)
+            .flat_map(|x| (sy0..=sy0 + 1).map(move |y| (x, y)))
+            .any(|c| self.tiles.contains_key(&c));
+        if !any {
+            return None;
+        }
+        let mut out = Tile::default();
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                let px = self.pixel(dx0 + x as i32 - offset[0], dy0 + y as i32 - offset[1]);
+                if px[3] != 0 {
+                    out.set_pixel(x, y, px);
+                }
+            }
+        }
+        Some(out)
     }
 
     /// Coarse content bounds in doc pixels `[x0, y0, x1, y1)` — tile

@@ -55,6 +55,23 @@ impl History {
         }
     }
 
+    /// Record a command whose effect is ALREADY in the document (live-edit
+    /// commit, e.g. a finished brush stroke): no apply, but redo will re-apply.
+    pub fn push_committed(&mut self, cmd: Box<dyn Command>) {
+        self.revision += 1;
+        self.redo.clear();
+        self.undo.push(cmd);
+        if self.undo.len() > self.limit {
+            self.undo.remove(0);
+        }
+    }
+
+    /// Revision bump without a command — live preview mutation tick (the
+    /// in-progress stroke), so revision-keyed caches refresh.
+    pub fn touch(&mut self) {
+        self.revision += 1;
+    }
+
     /// Begin/end a coalescing run (call on slider drag start/stop).
     pub fn set_merging(&mut self, merging: bool) {
         self.merging = merging;
