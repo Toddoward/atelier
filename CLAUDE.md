@@ -36,8 +36,10 @@ cargo run -p atelier-app         # launch the app
 cargo clippy --workspace -- -D warnings   # lint gate (CI-enforced)
 ```
 
-Windows 11 x64 dev box; rustup-managed stable toolchain. GPU tests that need a real adapter
-are `#[ignore]`-gated; CI uses software adapters.
+Windows 11 x64 dev box; rustup-managed stable toolchain. GPU golden-parity tests run only
+on real hardware adapters (they skip with a notice on software rasterizers like WARP —
+FXC can't compile the composite shader and software fp would break bit-exact asserts);
+run them locally before merging GPU/blend changes.
 
 ## Conventions
 

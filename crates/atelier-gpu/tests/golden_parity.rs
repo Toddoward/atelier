@@ -29,11 +29,19 @@ fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
+    let info = adapter.get_info();
+    if info.device_type == wgpu::DeviceType::Cpu {
+        // Software rasterizers (WARP/llvmpipe on CI) are not the parity target:
+        // FXC chokes on the composite shader and software fp would defeat the
+        // bit-exact assertion anyway. Parity is a hardware-truth gate (D-9).
+        eprintln!("SKIP: software adapter \"{}\" — parity runs on real GPUs only", info.name);
+        return None;
+    }
     let (device, queue) = pollster::block_on(
         adapter.request_device(&wgpu::DeviceDescriptor::default(), None),
     )
     .ok()?;
-    eprintln!("golden parity on adapter: {}", adapter.get_info().name);
+    eprintln!("golden parity on adapter: {}", info.name);
     Some((device, queue))
 }
 
