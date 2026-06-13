@@ -71,6 +71,7 @@ pub fn load_atl(path: &Path) -> Result<Document, AtlError> {
     if manifest.schema_version == 0 {
         migrate_v0(&mut doc_json);
     }
+    migrate_vector_placeholder(&mut doc_json);
     let mut doc: Document = serde_json::from_value(doc_json)?;
 
     // Reattach tile parts (absent in v0 files — manifest alone is a valid doc).
@@ -111,6 +112,38 @@ fn migrate_v0(doc_json: &mut serde_json::Value) {
         if raster.get("art").is_none() {
             let old = raster.take();
             *raster = serde_json::json!({ "art": old });
+        }
+    }
+}
+
+/// Migrate legacy `Vector(PlaceholderArt{bounds,color})` nodes (spec 0012) to a
+/// `VectorContent` holding one filled-rectangle shape.
+fn migrate_vector_placeholder(doc_json: &mut serde_json::Value) {
+    use atelier_core::atelier_vector::{Path, Shape};
+    let Some(nodes) = doc_json.get_mut("nodes").and_then(|n| n.as_object_mut()) else {
+        return;
+    };
+    for node in nodes.values_mut() {
+        let Some(vec_val) = node.get_mut("kind").and_then(|k| k.get_mut("Vector")) else {
+            continue;
+        };
+        // New form already has "shapes"; only migrate the old {bounds,color}.
+        let (Some(bounds), Some(color)) = (
+            vec_val.get("bounds").and_then(|b| b.as_array()).cloned(),
+            vec_val.get("color").and_then(|c| c.as_array()).cloned(),
+        ) else {
+            continue;
+        };
+        let f = |v: &serde_json::Value| v.as_f64().unwrap_or(0.0) as f32;
+        let b: Vec<f32> = bounds.iter().map(f).collect();
+        let c: Vec<f32> = color.iter().map(f).collect();
+        if b.len() == 4 && c.len() == 4 {
+            let shape = Shape::filled(
+                Path::rect(b[0], b[1], b[2], b[3]),
+                [c[0], c[1], c[2], c[3]],
+            );
+            let content = atelier_core::VectorContent { shapes: vec![shape] };
+            *vec_val = serde_json::to_value(content).expect("serialize vector content");
         }
     }
 }
@@ -219,6 +252,53 @@ mod tests {
         let err = load_atl(&path).unwrap_err();
         std::fs::remove_file(&path).ok();
         assert!(matches!(err, AtlError::BadTilePart(_)));
+    }
+
+    #[test]
+    fn round_trips_vector_shape_and_migrates_old_placeholder() {
+        use atelier_core::atelier_vector::{Path, Shape};
+        use atelier_core::VectorContent;
+        // New-form vector layer round-trips.
+        let mut doc = Document::new([16, 16], ProjectFocus::Vector);
+        let root = doc.root();
+        let content = VectorContent {
+            shapes: vec![Shape::filled(Path::rect(1.0, 2.0, 8.0, 9.0), [0.2, 0.4, 0.6, 1.0])],
+        };
+        let mut add = AddNode::new(
+            &mut doc,
+            Node::new(LayerProps::named("vec"), NodeKind::Vector(content.clone())),
+            root,
+            0,
+        );
+        add.apply(&mut doc);
+        let path = temp("vector");
+        save_atl(&doc, &path).unwrap();
+        let loaded = load_atl(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(doc, loaded);
+
+        // Legacy {bounds,color} vector payload migrates to one filled rect.
+        let mut json = serde_json::to_value(&doc).unwrap();
+        for node in json["nodes"].as_object_mut().unwrap().values_mut() {
+            if let Some(v) = node.get_mut("kind").and_then(|k| k.get_mut("Vector")) {
+                *v = serde_json::json!({ "bounds": [1.0, 2.0, 8.0, 9.0], "color": [0.2, 0.4, 0.6, 1.0] });
+            }
+        }
+        let p2 = temp("vector-old");
+        let mut zip = ZipWriter::new(File::create(&p2).unwrap());
+        zip.start_file(MANIFEST, SimpleFileOptions::default()).unwrap();
+        let m = serde_json::json!({ "schema_version": 1, "document": json }).to_string();
+        zip.write_all(m.as_bytes()).unwrap();
+        zip.finish().unwrap();
+        let migrated = load_atl(&p2).unwrap();
+        std::fs::remove_file(&p2).ok();
+        match &migrated.node(add.id).unwrap().kind {
+            NodeKind::Vector(c) => {
+                assert_eq!(c.shapes.len(), 1, "migrated to one shape");
+                assert_eq!(c.shapes[0].fill, Some([0.2, 0.4, 0.6, 1.0]));
+            }
+            _ => panic!("vector expected"),
+        }
     }
 
     #[test]

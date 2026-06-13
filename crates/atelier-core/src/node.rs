@@ -87,7 +87,8 @@ impl RasterContent {
 pub enum NodeKind {
     Group { expanded: bool },
     Raster(RasterContent),
-    Vector(PlaceholderArt),
+    /// Vector layer: an ordered list of tessellate-able shapes (spec 0012).
+    Vector(atelier_vector::VectorContent),
     /// Non-destructive adjustment layer (spec 0009): re-tones the backdrop below.
     Adjustment(Adjustment),
     /// Stubs until their phases (11, 10, 2): carry no data yet.

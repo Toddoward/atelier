@@ -13,6 +13,7 @@ pub mod node;
 pub mod tile;
 
 pub use adjust::Adjustment;
+pub use atelier_vector::{self, VectorContent};
 pub use blend::BlendMode;
 pub use command::Command;
 pub use document::{Document, ProjectFocus};

@@ -3,7 +3,35 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-e (spec 0011 — **PHASE 3 COMPLETE ☑**)
+## Last session: 2026-06-13-f (spec 0012 — Phase 4 STARTED, slice a DONE)
+
+### Done
+- **Spec 0012 ☑** — vector engine slice a: `atelier-vector` crate (pure: serde+lyon+kurbo,
+  D-14) with `Path`/`PathBuilder` (cubic Béziers, subpaths, fill rule, rect/ellipse),
+  `Shape`/`Stroke`/`VectorContent`, and `tessellate()` → flat-color triangle `Mesh` (fill +
+  stroke via lyon). `NodeKind::Vector(VectorContent)` replaces the PlaceholderArt stub;
+  `.atl` round-trips vector shapes + migrates legacy `Vector{bounds,color}`. Workspace +
+  clippy clean, smoke clean.
+- ROADMAP Phase 4 = ◐ (slice a done).
+
+### Next — Phase 4 continues
+1. **Spec 0013 (slice b)** — GPU mesh render: a wgpu pipeline in `atelier-gpu` that draws
+   `atelier_vector::Mesh` (flat-color triangles) into the canvas viewport; canvas tessellates
+   each vector layer's shapes (cache by revision) and draws them over the raster composite.
+   Resolution-independent (re-tessellate or transform in vertex shader) for crisp zoom (VEC-7).
+2. **Spec 0014 (slice c)** — pen tool (add/move/convert anchors), shape tools (rect/ellipse/
+   polygon/star/line), direct-select; create `NodeKind::Vector` layers; commands for shape
+   add/edit.
+3. Then booleans (i_overlay: unite/subtract/intersect/exclude), align/distribute, compound
+   paths. Then Phase 5 (focus modes + raster↔vector interop).
+
+### Watch out (additions)
+- `atelier-core` now depends on `atelier-vector` (D-14) — keep atelier-vector pure
+  (no GPU/UI). The GPU renderer (0013) consumes `Mesh`, it does not depend on lyon.
+- Canvas does NOT yet draw vector shapes (invisible until 0013); they exist in model + .atl.
+- even-odd vs non-zero test divergence requires same-winding subpaths (noted in spec 0012).
+
+## Previous session: 2026-06-13-e (spec 0011 — **PHASE 3 COMPLETE ☑**)
 
 ### Done
 - **Spec 0011 ☑** — magic wand + selection ops. `Mask::select_all`/`inverted` (core);
