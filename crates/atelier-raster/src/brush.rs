@@ -1,7 +1,11 @@
 //! Round brush / eraser stamping into a TileMap (spec 0005, RAS-2 core).
 //! Coordinates are layer space (caller subtracts the layer offset).
 
-use atelier_core::{TileCoord, TileMap, TILE_SIZE};
+use atelier_core::{Mask, TileCoord, TileMap, TILE_SIZE};
+
+/// Selection clip: a coverage mask in doc space and the painted layer's offset
+/// (layer pixel `p` maps to doc pixel `p + offset`).
+pub type BrushClip<'a> = (&'a Mask, [i32; 2]);
 
 #[derive(Debug, Clone, Copy)]
 pub struct BrushParams {
@@ -65,12 +69,23 @@ fn coverage(dist: f32, radius: f32, hardness: f32) -> f32 {
 
 /// Stamp a stroke segment (inclusive endpoints).
 pub fn stamp_segment(tiles: &mut TileMap, from: [f32; 2], to: [f32; 2], p: &BrushParams) {
+    stamp_segment_clipped(tiles, from, to, p, None);
+}
+
+/// Stamp a stroke segment, optionally clipped by a selection mask.
+pub fn stamp_segment_clipped(
+    tiles: &mut TileMap,
+    from: [f32; 2],
+    to: [f32; 2],
+    p: &BrushParams,
+    clip: Option<BrushClip<'_>>,
+) {
     for c in stamp_centers(from, to, p.radius) {
-        stamp(tiles, c, p);
+        stamp(tiles, c, p, clip);
     }
 }
 
-fn stamp(tiles: &mut TileMap, center: [f32; 2], p: &BrushParams) {
+fn stamp(tiles: &mut TileMap, center: [f32; 2], p: &BrushParams, clip: Option<BrushClip<'_>>) {
     let r = p.radius;
     let x0 = (center[0] - r).floor() as i32;
     let x1 = (center[0] + r).ceil() as i32;
@@ -79,9 +94,17 @@ fn stamp(tiles: &mut TileMap, center: [f32; 2], p: &BrushParams) {
     for y in y0..=y1 {
         for x in x0..=x1 {
             let (dx, dy) = (x as f32 + 0.5 - center[0], y as f32 + 0.5 - center[1]);
-            let cov = coverage((dx * dx + dy * dy).sqrt(), r, p.hardness);
+            let mut cov = coverage((dx * dx + dy * dy).sqrt(), r, p.hardness);
             if cov <= 0.0 {
                 continue;
+            }
+            // Selection clip: scale coverage by mask at the doc pixel.
+            if let Some((mask, offset)) = clip {
+                let m = mask.get(x + offset[0], y + offset[1]) as f32 / 255.0;
+                cov *= m;
+                if cov <= 0.0 {
+                    continue;
+                }
             }
             let dst = tiles.pixel(x, y);
             let out = if p.erase {

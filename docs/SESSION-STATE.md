@@ -3,7 +3,33 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13 (spec 0007 — Phase 3 slice a DONE)
+## Last session: 2026-06-13-b (spec 0008 — Phase 3 slice b DONE)
+
+### Done
+- **Spec 0008 ☑** — `atelier-raster::adjust` (Invert, Brightness/Contrast, Levels,
+  Hue/Saturation as pure per-pixel maps + `apply_tile` with selection-coverage clip +
+  `target_tiles`); brush gained `stamp_segment_clipped` so strokes honor the active
+  selection; app "Adjust" menu (Invert=Ctrl+I immediate; B/C, Levels, Hue/Sat dialogs)
+  applying to the selected raster layer within the selection (whole layer if none).
+  Adjustments reuse the generic `PaintTiles` snapshot command (one undo entry each).
+  80 tests green, clippy clean, smoke clean.
+- ROADMAP Phase 3 still ◐ (slices a+b done).
+
+### Next
+1. **Spec 0009 — Phase 3 slice c**: adjustment *layers* — a non-destructive node kind the
+   compositor applies to the backdrop beneath it (add `NodeKind::Adjustment(AdjustSpec)`;
+   compositor reads it; UI to add + edit). Reuses `atelier_raster::adjust` math.
+2. Slice d: free transform + crop + resample (from Phase 2, D-12).
+3. Magic wand + feather/grow/invert-selection; then Phase 4 (vector engine).
+
+### Watch out (additions)
+- Adjustments/brush operate on the selected layer node; the doc selection *mask* clips
+  which pixels change. `apply_adjustment` no-ops if no layer selected or layer not a
+  visible/unlocked raster.
+- `Mask::bounds()` is tile-granular (256-aligned) — fine for tile iteration, but don't
+  use it as a pixel-exact content box in tests (bit me once).
+
+## Previous session: 2026-06-13 (spec 0007 — Phase 3 slice a DONE)
 
 ### Done
 - **Spec 0007 ☑** — selection model: `atelier-core::mask::Mask` (sparse 256² u8 tiles,

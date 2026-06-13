@@ -131,6 +131,8 @@ struct AtelierApp {
     new_doc: Option<NewDocDialog>,
     /// Image → Canvas Size… dialog (pending width/height).
     canvas_size: Option<[u32; 2]>,
+    /// Adjust dialog (parametric adjustment being edited).
+    adjust_dialog: Option<atelier_raster::Adjustment>,
     pending: Option<PendingAction>,
     error: Option<String>,
     last_title: String,
@@ -170,6 +172,7 @@ impl AtelierApp {
             state: None,
             new_doc: None,
             canvas_size: None,
+            adjust_dialog: None,
             pending: None,
             error: None,
             last_title: String::new(),
@@ -252,6 +255,62 @@ impl AtelierApp {
         }
     }
 
+    /// Apply a destructive adjustment to the selected raster layer, within the
+    /// active selection (whole layer if none). One undoable PaintTiles entry.
+    fn apply_adjustment(&mut self, adj: atelier_raster::Adjustment) {
+        use atelier_core::NodeKind;
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        // Target must be a visible, unlocked raster layer.
+        let offset = match st.editor.doc.node(id).map(|n| (&n.kind, &n.props)) {
+            Some((NodeKind::Raster(c), props)) if props.visible && !props.locked => c.offset,
+            _ => return,
+        };
+        let mask = st.editor.doc.selection.clone();
+        let bounds = mask.as_deref().and_then(|m| m.bounds());
+
+        let coords = {
+            let NodeKind::Raster(c) = &st.editor.doc.node(id).expect("checked").kind else {
+                return;
+            };
+            atelier_raster::target_tiles(&c.tiles, bounds, offset)
+        };
+        if coords.is_empty() {
+            return;
+        }
+
+        // Capture before, mutate clones, reinsert.
+        let mut before = Vec::with_capacity(coords.len());
+        {
+            let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).expect("checked").kind
+            else {
+                return;
+            };
+            for (tx, ty) in coords {
+                let original = c.tiles.tile_at((tx, ty)).cloned();
+                before.push(((tx, ty), original.clone()));
+                if let Some(mut tile) = original {
+                    atelier_raster::apply_tile(
+                        &mut tile,
+                        adj,
+                        tx,
+                        ty,
+                        offset,
+                        mask.as_deref(),
+                    );
+                    c.tiles.insert_tile((tx, ty), tile);
+                }
+            }
+        }
+        let cmd = atelier_core::command::PaintTiles::from_capture(
+            &st.editor.doc,
+            id,
+            adj.label(),
+            before,
+        );
+        st.editor.history.push_committed(Box::new(cmd));
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, KeyboardShortcut, Modifiers};
         const CMD: Modifiers = Modifiers::COMMAND;
@@ -282,6 +341,12 @@ impl AtelierApp {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&open)) {
             self.request_open();
+        }
+
+        // Invert (Ctrl+I).
+        let invert = KeyboardShortcut::new(CMD, Key::I);
+        if ctx.input_mut(|i| i.consume_shortcut(&invert)) {
+            self.apply_adjustment(atelier_raster::Adjustment::Invert);
         }
 
         // Deselect (Ctrl+D).
@@ -360,6 +425,30 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.canvas_size = size;
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("Adjust", |ui| {
+                    use atelier_raster::Adjustment;
+                    let has = self.state.is_some();
+                    if ui.add_enabled(has, egui::Button::new("Invert\t(Ctrl+I)")).clicked() {
+                        self.apply_adjustment(Adjustment::Invert);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.add_enabled(has, egui::Button::new("Brightness/Contrast…")).clicked() {
+                        self.adjust_dialog =
+                            Some(Adjustment::BrightnessContrast { brightness: 0.0, contrast: 0.0 });
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(has, egui::Button::new("Levels…")).clicked() {
+                        self.adjust_dialog =
+                            Some(Adjustment::Levels { black: 0.0, white: 1.0, gamma: 1.0 });
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(has, egui::Button::new("Hue/Saturation…")).clicked() {
+                        self.adjust_dialog =
+                            Some(Adjustment::HueSaturation { hue: 0.0, sat: 0.0, light: 0.0 });
                         ui.close_menu();
                     }
                 });
@@ -467,6 +556,51 @@ impl AtelierApp {
             }
         } else if resize_cancel {
             self.canvas_size = None;
+        }
+
+        // Adjustment dialog (parametric).
+        let mut adjust_apply: Option<atelier_raster::Adjustment> = None;
+        let mut adjust_cancel = false;
+        if let Some(adj) = &mut self.adjust_dialog {
+            use atelier_raster::Adjustment;
+            egui::Window::new(adj.label())
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    match adj {
+                        Adjustment::BrightnessContrast { brightness, contrast } => {
+                            ui.add(egui::Slider::new(brightness, -1.0..=1.0).text("Brightness"));
+                            ui.add(egui::Slider::new(contrast, -1.0..=1.0).text("Contrast"));
+                        }
+                        Adjustment::Levels { black, white, gamma } => {
+                            ui.add(egui::Slider::new(black, 0.0..=1.0).text("Black point"));
+                            ui.add(egui::Slider::new(white, 0.0..=1.0).text("White point"));
+                            ui.add(egui::Slider::new(gamma, 0.1..=5.0).text("Gamma"));
+                        }
+                        Adjustment::HueSaturation { hue, sat, light } => {
+                            ui.add(egui::Slider::new(hue, -180.0..=180.0).text("Hue"));
+                            ui.add(egui::Slider::new(sat, -1.0..=1.0).text("Saturation"));
+                            ui.add(egui::Slider::new(light, -1.0..=1.0).text("Lightness"));
+                        }
+                        Adjustment::Invert => {}
+                    }
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Apply").clicked() {
+                            adjust_apply = Some(*adj);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            adjust_cancel = true;
+                        }
+                    });
+                });
+        }
+        if let Some(adj) = adjust_apply {
+            self.adjust_dialog = None;
+            self.apply_adjustment(adj);
+        } else if adjust_cancel {
+            self.adjust_dialog = None;
         }
 
         // Unsaved-changes confirmation.
@@ -1113,6 +1247,82 @@ mod ui_tests {
         assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_none());
         send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
         assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_some());
+    }
+
+    /// Spec 0008: Invert via menu mutates the selected layer's pixels + undoable.
+    #[test]
+    fn invert_adjustment_changes_pixels_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut tiles = atelier_core::TileMap::new();
+                tiles.fill_rect(0, 0, 64, 64, [10, 20, 30, 255]);
+                c.tiles = tiles;
+            }
+        }
+        let sample = |h: &Harness<'static, AtelierApp>| -> [u8; 4] {
+            let st = h.state().state.as_ref().unwrap();
+            let NodeKind::Raster(c) = &st.editor.doc.node(id).unwrap().kind else {
+                panic!()
+            };
+            c.tiles.pixel(8, 8)
+        };
+        let before = sample(&h);
+        assert_ne!(before[3], 0, "layer has opaque pixels");
+
+        h.state_mut().apply_adjustment(atelier_raster::Adjustment::Invert);
+        h.run();
+        let after = sample(&h);
+        assert_eq!(after[0], 255 - before[0], "red inverted");
+        assert_eq!(after[3], before[3], "alpha preserved");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(sample(&h), before, "undo restored pixels");
+    }
+
+    /// Adjustment restricted to a selection leaves outside pixels untouched.
+    #[test]
+    fn adjustment_respects_selection_bounds() {
+        let mut h = harness();
+        create_doc(&mut h);
+        // Fill the whole 64x64 layer with a known opaque color.
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut tiles = atelier_core::TileMap::new();
+                tiles.fill_rect(0, 0, 64, 64, [10, 20, 30, 255]);
+                c.tiles = tiles;
+            }
+        }
+        // Select only the left 20 px column via the model.
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let mut m = atelier_core::Mask::new();
+            for y in 0..64 {
+                for x in 0..20 {
+                    m.set(x, y, 255);
+                }
+            }
+            let cmd = atelier_core::command::SetSelection::new(
+                &st.editor.doc,
+                Some(std::sync::Arc::new(m)),
+                "test sel",
+            );
+            st.editor.apply(Box::new(cmd));
+        }
+
+        h.state_mut().apply_adjustment(atelier_raster::Adjustment::Invert);
+        h.run();
+        let st = h.state().state.as_ref().unwrap();
+        let NodeKind::Raster(c) = &st.editor.doc.node(id).unwrap().kind else { panic!() };
+        assert_eq!(c.tiles.pixel(5, 5), [245, 235, 225, 255], "inside selection inverted");
+        assert_eq!(c.tiles.pixel(40, 5), [10, 20, 30, 255], "outside selection untouched");
     }
 
     #[test]

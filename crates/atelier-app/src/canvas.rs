@@ -152,6 +152,9 @@ fn handle_tools(
                 erase,
             };
 
+            // Selection clip (Arc clone keeps it alive while tiles are borrowed).
+            let clip_mask = state.editor.doc.selection.clone();
+
             if response.drag_started_by(egui::PointerButton::Primary) {
                 let Some(id) = editable_raster(state) else { return };
                 let Some(pos) = response.interact_pointer_pos() else { return };
@@ -160,7 +163,8 @@ fn handle_tools(
                 let p = [doc[0] - off[0] as f32, doc[1] - off[1] as f32];
                 let mut stroke =
                     StrokeState { layer: id, last: p, capture: Default::default(), erase };
-                stroke_segment(state_doc(state, id), p, p, &params, &mut stroke);
+                let clip = clip_mask.as_deref().map(|m| (m, off));
+                stroke_segment(state_doc(state, id), p, p, &params, clip, &mut stroke);
                 mark_dirty(state, p, p, off, params.radius);
                 state.stroke = Some(stroke);
             } else if response.dragged_by(egui::PointerButton::Primary) {
@@ -170,7 +174,8 @@ fn handle_tools(
                     let doc = pointer_doc(pos);
                     let p = [doc[0] - off[0] as f32, doc[1] - off[1] as f32];
                     let last = stroke.last;
-                    stroke_segment(state_doc(state, stroke.layer), last, p, &params, &mut stroke);
+                    let clip = clip_mask.as_deref().map(|m| (m, off));
+                    stroke_segment(state_doc(state, stroke.layer), last, p, &params, clip, &mut stroke);
                     mark_dirty(state, last, p, off, params.radius);
                     stroke.last = p;
                 }
@@ -288,18 +293,19 @@ fn mark_dirty(state: &mut EditorState, a: [f32; 2], b: [f32; 2], off: [i32; 2], 
     });
 }
 
-/// Capture-then-stamp one segment.
+/// Capture-then-stamp one segment, optionally selection-clipped.
 fn stroke_segment(
     tiles: &mut atelier_core::TileMap,
     from: [f32; 2],
     to: [f32; 2],
     params: &BrushParams,
+    clip: Option<(&atelier_core::Mask, [i32; 2])>,
     stroke: &mut StrokeState,
 ) {
     for coord in atelier_raster::segment_tiles(from, to, params.radius) {
         stroke.capture.entry(coord).or_insert_with(|| tiles.tile_at(coord).cloned());
     }
-    atelier_raster::stamp_segment(tiles, from, to, params);
+    atelier_raster::stamp_segment_clipped(tiles, from, to, params, clip);
 }
 
 /// Map a document-space rect to screen space within the canvas rect.
