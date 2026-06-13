@@ -3,7 +3,30 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-v (spec 0028 — multi-select + group/ungroup DONE)
+## Last session: 2026-06-13-w (spec 0029 — cross-layer align/distribute DONE)
+
+### Done
+- **Spec 0029 ☑** — multi-object VEC-6: `panels::align_layers` / `distribute_layers` align or
+  distribute the selected raster/vector layers to each other (per-layer translate as one
+  `Batch` undo step). New `command::Batch` (apply-in-order/revert-in-reverse) +
+  `TileMap::content_bounds` (pixel-exact). Layers-panel controls appear with a multi-selection.
+  core 40 / app 33 tests green, clippy clean, smoke clean.
+- VEC-6 now complete (within-layer 0026 + canvas-align 0022 + cross-layer 0029).
+
+### Next
+1. **Boolean path ops** (VEC-5) — the last big vector item; NEW `i_overlay` dep, read its API
+   first. Persistent deferred new-dep task.
+2. **Copy/paste layers** (reuse `InsertSubtree` + a clipboard on the app); group-as-unit move.
+3. Phase 5 — place image (INT-3, needs `image` decode + file dialog), smart objects,
+   z-interleaved raster+vector compositing.
+
+### Watch out (additions)
+- `command::Batch` = one undo step for N commands (reuse for any compound edit).
+- Raster alignment uses `TileMap::content_bounds` (pixel-exact, O(pixels)); the older
+  `bounds` is tile-granular (256 px) — don't use it where precision matters.
+- Cross-layer align moves only raster/vector leaves (groups skipped).
+
+## Previous session: 2026-06-13-v (spec 0028 — multi-select + group/ungroup DONE)
 
 ### Done
 - **Spec 0028 ☑** — additive node multi-select (`EditorState.selected_extra` beside primary

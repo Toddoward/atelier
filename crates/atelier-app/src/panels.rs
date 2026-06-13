@@ -91,6 +91,34 @@ pub fn layers_ui(ui: &mut egui::Ui, state: &mut EditorState) {
     toolbar(ui, state);
     ui.separator();
     selected_layer_controls(ui, state);
+    // Cross-layer align/distribute appears with a multi-selection (spec 0029).
+    if selected_set(state).len() >= 2 {
+        ui.label("Align layers");
+        ui.horizontal(|ui| {
+            for (label, a) in [
+                ("L", Align::Left),
+                ("C", Align::HCenter),
+                ("R", Align::Right),
+                ("T", Align::Top),
+                ("M", Align::VMiddle),
+                ("B", Align::Bottom),
+            ] {
+                if ui.small_button(label).clicked() {
+                    align_layers(state, a);
+                }
+            }
+        });
+        if selected_set(state).len() >= 3 {
+            ui.horizontal(|ui| {
+                if ui.button("Distribute H").clicked() {
+                    distribute_layers(state, true);
+                }
+                if ui.button("Distribute V").clicked() {
+                    distribute_layers(state, false);
+                }
+            });
+        }
+    }
     ui.separator();
 
     // Rows in panel order, skipping children of collapsed groups.
@@ -575,6 +603,135 @@ pub fn distribute_shapes_in_layer(state: &mut EditorState, id: NodeId, horizonta
     }
     let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, new);
     state.editor.apply(Box::new(cmd));
+}
+
+/// Currently selected nodes (primary + valid extras, deduped).
+fn selected_set(state: &EditorState) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    if let Some(p) = state.editor.selection {
+        out.push(p);
+    }
+    for &e in &state.selected_extra {
+        if Some(e) != state.editor.selection && state.editor.doc.node(e).is_some() {
+            out.push(e);
+        }
+    }
+    out
+}
+
+/// Doc-space bounds of a raster (tiles+offset) or vector (shape union) layer.
+fn layer_doc_bounds(node: &atelier_core::Node) -> Option<[f32; 4]> {
+    match &node.kind {
+        NodeKind::Raster(c) => {
+            let [x0, y0, x1, y1] = c.tiles.content_bounds()?;
+            let [ox, oy] = c.offset;
+            Some([(x0 + ox) as f32, (y0 + oy) as f32, (x1 + ox) as f32, (y1 + oy) as f32])
+        }
+        NodeKind::Vector(c) => {
+            let mut bb: Option<[f32; 4]> = None;
+            for s in &c.shapes {
+                if let Some(b) = s.path.bounds() {
+                    bb = Some(match bb {
+                        None => b,
+                        Some(o) => [o[0].min(b[0]), o[1].min(b[1]), o[2].max(b[2]), o[3].max(b[3])],
+                    });
+                }
+            }
+            bb
+        }
+        _ => None,
+    }
+}
+
+/// Command translating a whole layer by `(dx, dy)` doc px (raster=offset,
+/// vector=shape translate). None for other kinds.
+fn translate_layer_cmd(
+    doc: &atelier_core::Document,
+    id: NodeId,
+    dx: f32,
+    dy: f32,
+) -> Option<Box<dyn atelier_core::Command>> {
+    match &doc.node(id)?.kind {
+        NodeKind::Raster(c) => {
+            let new = [c.offset[0] + dx.round() as i32, c.offset[1] + dy.round() as i32];
+            Some(Box::new(atelier_core::command::SetOffset::new(doc, id, new)))
+        }
+        NodeKind::Vector(c) => {
+            let mut shapes = c.shapes.clone();
+            for s in &mut shapes {
+                s.path.translate(dx, dy);
+            }
+            Some(Box::new(atelier_core::command::SetVectorShapes::new(doc, id, shapes)))
+        }
+        _ => None,
+    }
+}
+
+/// Align selected raster/vector layers to each other (union bounds). Spec 0029.
+pub fn align_layers(state: &mut EditorState, a: Align) {
+    let ids = selected_set(state);
+    let items: Vec<(NodeId, [f32; 4])> = ids
+        .iter()
+        .filter_map(|&id| state.editor.doc.node(id).and_then(layer_doc_bounds).map(|b| (id, b)))
+        .collect();
+    if items.len() < 2 {
+        return;
+    }
+    let u = items.iter().map(|(_, b)| *b).fold(items[0].1, |o, b| {
+        [o[0].min(b[0]), o[1].min(b[1]), o[2].max(b[2]), o[3].max(b[3])]
+    });
+    let mut cmds: Vec<Box<dyn atelier_core::Command>> = Vec::new();
+    for (id, b) in &items {
+        let (dx, dy) = match a {
+            Align::Left => (u[0] - b[0], 0.0),
+            Align::Right => (u[2] - b[2], 0.0),
+            Align::HCenter => ((u[0] + u[2]) * 0.5 - (b[0] + b[2]) * 0.5, 0.0),
+            Align::Top => (0.0, u[1] - b[1]),
+            Align::Bottom => (0.0, u[3] - b[3]),
+            Align::VMiddle => (0.0, (u[1] + u[3]) * 0.5 - (b[1] + b[3]) * 0.5),
+        };
+        if dx != 0.0 || dy != 0.0 {
+            if let Some(cmd) = translate_layer_cmd(&state.editor.doc, *id, dx, dy) {
+                cmds.push(cmd);
+            }
+        }
+    }
+    if !cmds.is_empty() {
+        state.editor.apply(Box::new(atelier_core::command::Batch::new(cmds, "Align Layers")));
+    }
+}
+
+/// Evenly distribute selected layers by center along an axis. Spec 0029.
+pub fn distribute_layers(state: &mut EditorState, horizontal: bool) {
+    let ids = selected_set(state);
+    let items: Vec<(NodeId, [f32; 4])> = ids
+        .iter()
+        .filter_map(|&id| state.editor.doc.node(id).and_then(layer_doc_bounds).map(|b| (id, b)))
+        .collect();
+    let n = items.len();
+    if n < 3 {
+        return;
+    }
+    let center = |b: &[f32; 4]| if horizontal { (b[0] + b[2]) * 0.5 } else { (b[1] + b[3]) * 0.5 };
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&i, &j| center(&items[i].1).partial_cmp(&center(&items[j].1)).expect("finite"));
+    let first = center(&items[order[0]].1);
+    let last = center(&items[order[n - 1]].1);
+    let step = (last - first) / (n as f32 - 1.0);
+    let mut cmds: Vec<Box<dyn atelier_core::Command>> = Vec::new();
+    for (rank, &i) in order.iter().enumerate() {
+        let target = first + step * rank as f32;
+        let d = target - center(&items[i].1);
+        let (dx, dy) = if horizontal { (d, 0.0) } else { (0.0, d) };
+        if dx != 0.0 || dy != 0.0 {
+            if let Some(cmd) = translate_layer_cmd(&state.editor.doc, items[i].0, dx, dy) {
+                cmds.push(cmd);
+            }
+        }
+    }
+    if !cmds.is_empty() {
+        state.editor.apply(Box::new(atelier_core::command::Batch::new(cmds, "Distribute Layers")));
+    }
 }
 
 /// Merge a vector layer's shapes into one compound path (even-odd fill so

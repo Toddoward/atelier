@@ -572,6 +572,43 @@ impl Command for SetVectorShapes {
     }
 }
 
+/// Several commands applied/undone as one history entry (spec 0029). Applied in
+/// order, reverted in reverse.
+#[derive(Debug)]
+pub struct Batch {
+    cmds: Vec<Box<dyn Command>>,
+    label: String,
+}
+
+impl Batch {
+    pub fn new(cmds: Vec<Box<dyn Command>>, label: impl Into<String>) -> Self {
+        Self { cmds, label: label.into() }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cmds.is_empty()
+    }
+}
+
+impl Command for Batch {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        for c in &mut self.cmds {
+            c.apply(doc);
+        }
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        for c in self.cmds.iter_mut().rev() {
+            c.revert(doc);
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Group sibling nodes under a new group (DOC-2, spec 0028). All `ids` must
 /// share a parent. The group takes the position of the topmost member; members
 /// keep their relative order inside it.
@@ -949,6 +986,29 @@ mod tests {
         // Merge coalesces same-target edits (one undo per drag).
         let next = SetVectorShapes::new(&doc, id, edited);
         assert!(cmd.try_merge(next.as_any()));
+    }
+
+    #[test]
+    fn batch_applies_in_order_and_reverts_in_reverse() {
+        let mut doc = Document::new([16, 16], ProjectFocus::Raster);
+        let root = doc.root();
+        let mut add = AddNode::new(&mut doc, leaf("a"), root, 0);
+        add.apply(&mut doc);
+        let id = add.id;
+        let baseline = doc.clone();
+
+        let mut batch = Batch::new(
+            vec![
+                Box::new(SetName::new(&doc, id, "x".into())),
+                Box::new(SetOpacity::new(&doc, id, 0.5)),
+            ],
+            "Batch",
+        );
+        batch.apply(&mut doc);
+        assert_eq!(doc.node(id).unwrap().props.name, "x");
+        assert_eq!(doc.node(id).unwrap().props.opacity, 0.5);
+        batch.revert(&mut doc);
+        assert_eq!(doc, baseline, "batch revert restores everything");
     }
 
     #[test]

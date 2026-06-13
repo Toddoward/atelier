@@ -186,6 +186,30 @@ impl TileMap {
         (x1 > x0).then_some([x0, y0, x1, y1])
     }
 
+    /// Pixel-exact content bounds in doc pixels `[x0, y0, x1, y1)` (scans
+    /// non-zero-alpha pixels), None when empty. Slower than [`bounds`] but
+    /// precise — used for alignment (spec 0029).
+    pub fn content_bounds(&self) -> Option<[i32; 4]> {
+        let t = TILE_SIZE as i32;
+        let mut r: Option<[i32; 4]> = None;
+        for (&(tx, ty), tile) in &self.tiles {
+            for y in 0..TILE_SIZE {
+                for x in 0..TILE_SIZE {
+                    if tile.pixel(x, y)[3] != 0 {
+                        let (dx, dy) = (tx * t + x as i32, ty * t + y as i32);
+                        r = Some(match r {
+                            None => [dx, dy, dx + 1, dy + 1],
+                            Some(b) => {
+                                [b[0].min(dx), b[1].min(dy), b[2].max(dx + 1), b[3].max(dy + 1)]
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        r
+    }
+
     /// Coarse content bounds in doc pixels `[x0, y0, x1, y1)` — tile
     /// granularity (selection outlines, invalidation), None when empty.
     pub fn bounds(&self) -> Option<[i32; 4]> {

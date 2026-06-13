@@ -1899,6 +1899,46 @@ mod ui_tests {
         h.run();
     }
 
+    /// Spec 0029: align two raster layers to each other (left); undo restores.
+    #[test]
+    fn cross_layer_align_left_and_undo() {
+        let mut h = harness();
+        create_doc(&mut h);
+        // Two raster layers with content at different x.
+        let mk = |h: &mut Harness<'static, AtelierApp>, x: i32| -> NodeId {
+            click_label(h, "+ Layer");
+            let st = h.state_mut().state.as_mut().unwrap();
+            let id = st.editor.selection.unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(x, 0, x + 10, 10, [255, 255, 255, 255]);
+                c.tiles = t;
+                c.offset = [0, 0];
+            }
+            id
+        };
+        let a = mk(&mut h, 5);
+        let b = mk(&mut h, 60);
+        h.run();
+        let left = |h: &Harness<'static, AtelierApp>, id: NodeId| -> i32 {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Raster(c) => c.tiles.content_bounds().unwrap()[0] + c.offset[0],
+                _ => panic!(),
+            }
+        };
+        assert_ne!(left(&h, a), left(&h, b), "start at different lefts");
+
+        h.state_mut().state.as_mut().unwrap().selected_extra = vec![a];
+        h.state_mut().state.as_mut().unwrap().editor.selection = Some(b);
+        panels::align_layers(h.state_mut().state.as_mut().unwrap(), panels::Align::Left);
+        h.run();
+        assert_eq!(left(&h, a), left(&h, b), "both aligned to the same left");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_ne!(left(&h, a), left(&h, b), "single undo restored both (batch)");
+    }
+
     /// Spec 0028: group two layers, then ungroup; undoable.
     #[test]
     fn group_and_ungroup_layers_via_app() {
