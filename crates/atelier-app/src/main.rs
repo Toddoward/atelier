@@ -2105,6 +2105,60 @@ mod ui_tests {
         );
     }
 
+    /// Spec 0031: boolean Pathfinder union of two overlapping shapes; undoable.
+    #[test]
+    fn pathfinder_union_via_app() {
+        use atelier_core::atelier_vector::{BoolOp, Path, Shape};
+        let mut h = harness();
+        create_doc(&mut h);
+        let id = {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let content = atelier_core::VectorContent {
+                shapes: vec![
+                    Shape::filled(Path::rect(0.0, 0.0, 10.0, 10.0), [1.0; 4]),
+                    Shape::filled(Path::rect(5.0, 0.0, 10.0, 10.0), [1.0; 4]),
+                ],
+            };
+            let cmd = atelier_core::command::AddNode::new(
+                &mut st.editor.doc,
+                atelier_core::Node::new(
+                    atelier_core::LayerProps::named("v"),
+                    atelier_core::NodeKind::Vector(content),
+                ),
+                root,
+                0,
+            );
+            let id = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(id);
+            id
+        };
+        h.run();
+        let nshapes = |h: &Harness<'static, AtelierApp>| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Vector(c) => c.shapes.len(),
+                _ => panic!(),
+            }
+        };
+        assert_eq!(nshapes(&h), 2);
+
+        panels::pathfinder(h.state_mut().state.as_mut().unwrap(), id, BoolOp::Union);
+        h.run();
+        assert_eq!(nshapes(&h), 1, "united into one shape");
+        {
+            let st = h.state().state.as_ref().unwrap();
+            if let NodeKind::Vector(c) = &st.editor.doc.node(id).unwrap().kind {
+                let bb = c.shapes[0].path.bounds().unwrap();
+                assert!(bb[0] <= 0.5 && bb[2] >= 14.5, "union spans both rects: {bb:?}");
+            }
+        }
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(nshapes(&h), 2, "undo restored both shapes");
+    }
+
     /// Spec 0026: align + distribute shapes within a vector layer.
     #[test]
     fn align_and_distribute_shapes_in_layer() {

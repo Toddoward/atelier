@@ -3,7 +3,34 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-x (spec 0030 — copy/paste layers DONE)
+## Last session: 2026-06-13-y (spec 0031 — boolean path ops DONE; **PHASE 4 COMPLETE**)
+
+### Done
+- **Spec 0031 ☑** — boolean Pathfinder (VEC-5): new dep **i_overlay 2.2.0** in atelier-vector;
+  `atelier-vector::boolean` (`BoolOp` Union/Intersect/Difference/Exclude; flatten cubics →
+  `i_overlay` overlay (NonZero) → line `Path`, compound-aware). App `panels::pathfinder` folds
+  the op across a vector layer's shapes (undoable), Properties buttons. vector +5 / app 35
+  tests green, clippy clean, smoke clean.
+- **Phase 4 vector engine is COMPLETE** (path model, tessellation, GPU render, all shape
+  tools, pen + full anchor/handle editing, align/distribute, compound paths, booleans) +
+  INT-2 rasterize w/ AA + full layer mgmt (duplicate/multi-select/group/copy-paste).
+- Dep-integration method that worked: add dep → `cargo fetch` → read crate source in
+  `~/.cargo/registry/src` → code to real API. Use this for future new deps.
+
+### Next — pick a phase
+1. **Phase 5 — focus modes & raster↔vector interop**: New-doc focus chooser exists (INT-1
+   groundwork); remaining INT-2 done; **INT-3 place image** (needs `image` decode + rfd file
+   dialog — add `image` dep, same fetch+read method), INT-4 cross-paste, smart objects
+   (DOC-5), z-interleaved raster+vector compositing (vectors currently overlay).
+2. **Phase 6 — color management** (lcms2): working spaces, assign/convert, picker.
+3. Boolean polish: re-fit curves to results; cross-layer boolean.
+
+### Watch out (additions)
+- New deps go in `[dependencies]` not `[dev-dependencies]` if used by non-test lib code
+  (booleans compiled under `cargo test` but broke `cargo build` until moved).
+- Boolean output is flattened polylines (24 steps/cubic) — curves not preserved through ops.
+
+## Previous session: 2026-06-13-x (spec 0030 — copy/paste layers DONE)
 
 ### Done
 - **Spec 0030 ☑** — copy/paste layers: `EditorState.clipboard` (source NodeId); `paste_layer`

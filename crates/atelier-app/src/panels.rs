@@ -463,6 +463,20 @@ pub fn properties_ui(ui: &mut egui::Ui, state: &mut EditorState) {
                 release_compound_path(state, id);
             }
         });
+        ui.label("Pathfinder");
+        ui.horizontal(|ui| {
+            use atelier_core::atelier_vector::BoolOp;
+            for (label, op) in [
+                ("Unite", BoolOp::Union),
+                ("Intersect", BoolOp::Intersect),
+                ("Minus", BoolOp::Difference),
+                ("Exclude", BoolOp::Exclude),
+            ] {
+                if ui.small_button(label).clicked() {
+                    pathfinder(state, id, op);
+                }
+            }
+        });
         ui.label("Align shapes");
         ui.horizontal(|ui| {
             for (label, a) in [
@@ -732,6 +746,31 @@ pub fn distribute_layers(state: &mut EditorState, horizontal: bool) {
     if !cmds.is_empty() {
         state.editor.apply(Box::new(atelier_core::command::Batch::new(cmds, "Distribute Layers")));
     }
+}
+
+/// Apply a boolean Pathfinder op across a vector layer's shapes (folded
+/// left), replacing them with the single resulting shape. Undoable; no-op with
+/// < 2 shapes. Spec 0031 (VEC-5).
+pub fn pathfinder(state: &mut EditorState, id: NodeId, op: atelier_core::atelier_vector::BoolOp) {
+    use atelier_core::atelier_vector::{boolean, Shape};
+    let shapes = match state.editor.doc.node(id).map(|n| &n.kind) {
+        Some(NodeKind::Vector(c)) => c.shapes.clone(),
+        _ => return,
+    };
+    if shapes.len() < 2 {
+        return;
+    }
+    let mut acc = shapes[0].path.clone();
+    for s in &shapes[1..] {
+        acc = boolean(&acc, &s.path, op);
+    }
+    let result = if acc.subpaths.is_empty() {
+        Vec::new()
+    } else {
+        vec![Shape { path: acc, fill: shapes[0].fill, stroke: shapes[0].stroke }]
+    };
+    let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, result);
+    state.editor.apply(Box::new(cmd));
 }
 
 /// Merge a vector layer's shapes into one compound path (even-odd fill so
