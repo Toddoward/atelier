@@ -252,6 +252,20 @@ impl Path {
         false
     }
 
+    /// Append another path's subpaths to this one (compound path, VEC-8 / spec 0024).
+    pub fn append(&mut self, other: &Path) {
+        self.subpaths.extend(other.subpaths.iter().cloned());
+    }
+
+    /// Split into one single-subpath `Path` per subpath (release compound).
+    /// Each keeps this path's fill rule.
+    pub fn split_subpaths(&self) -> Vec<Path> {
+        self.subpaths
+            .iter()
+            .map(|sp| Path { subpaths: vec![sp.clone()], fill_rule: self.fill_rule })
+            .collect()
+    }
+
     /// Translate every anchor and control point by `(dx, dy)`. Spec 0022.
     pub fn translate(&mut self, dx: f32, dy: f32) {
         let shift = |p: &mut Point| {
@@ -552,6 +566,24 @@ mod tests {
         // No outgoing segment at the last anchor; no incoming at the start.
         assert!(!p.set_out_handle(3, [0.0, 0.0]));
         assert!(!p.set_in_handle(0, [0.0, 0.0]));
+    }
+
+    #[test]
+    fn append_and_split_subpaths_round_trip() {
+        let mut a = Path::rect(0.0, 0.0, 10.0, 10.0);
+        let b = Path::rect(20.0, 0.0, 10.0, 10.0);
+        assert_eq!(a.subpaths.len(), 1);
+        a.append(&b);
+        assert_eq!(a.subpaths.len(), 2, "compound has two subpaths");
+        a.fill_rule = FillRule::EvenOdd;
+
+        let parts = a.split_subpaths();
+        assert_eq!(parts.len(), 2, "released back into two paths");
+        assert_eq!(parts[0].subpaths.len(), 1);
+        assert_eq!(parts[1].fill_rule, FillRule::EvenOdd, "fill rule carried");
+        // The two parts cover the two original rects.
+        assert_eq!(parts[0].bounds(), Some([0.0, 0.0, 10.0, 10.0]));
+        assert_eq!(parts[1].bounds(), Some([20.0, 0.0, 30.0, 10.0]));
     }
 
     #[test]

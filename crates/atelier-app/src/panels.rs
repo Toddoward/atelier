@@ -415,6 +415,14 @@ pub fn properties_ui(ui: &mut egui::Ui, state: &mut EditorState) {
                 }
             }
         });
+        ui.horizontal(|ui| {
+            if ui.button("Make Compound").clicked() {
+                make_compound_path(state, id);
+            }
+            if ui.button("Release").clicked() {
+                release_compound_path(state, id);
+            }
+        });
     }
 }
 
@@ -464,6 +472,53 @@ pub fn align_vector_to_canvas(state: &mut EditorState, id: NodeId, a: Align) {
         s.path.translate(dx, dy);
     }
     let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, new_shapes);
+    state.editor.apply(Box::new(cmd));
+}
+
+/// Merge a vector layer's shapes into one compound path (even-odd fill so
+/// overlaps cut holes). Undoable; no-op with <2 shapes. Spec 0024.
+pub fn make_compound_path(state: &mut EditorState, id: NodeId) {
+    use atelier_core::atelier_vector::{FillRule, Shape};
+    let shapes = match state.editor.doc.node(id).map(|n| &n.kind) {
+        Some(NodeKind::Vector(c)) => c.shapes.clone(),
+        _ => return,
+    };
+    if shapes.len() < 2 {
+        return;
+    }
+    let mut path = shapes[0].path.clone();
+    for s in &shapes[1..] {
+        path.append(&s.path);
+    }
+    path.fill_rule = FillRule::EvenOdd;
+    let merged = Shape { path, fill: shapes[0].fill, stroke: shapes[0].stroke };
+    let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, vec![merged]);
+    state.editor.apply(Box::new(cmd));
+}
+
+/// Release a compound path: split each shape's subpaths into separate shapes.
+/// Undoable; no-op when nothing has multiple subpaths. Spec 0024.
+pub fn release_compound_path(state: &mut EditorState, id: NodeId) {
+    use atelier_core::atelier_vector::Shape;
+    let shapes = match state.editor.doc.node(id).map(|n| &n.kind) {
+        Some(NodeKind::Vector(c)) => c.shapes.clone(),
+        _ => return,
+    };
+    let mut out = Vec::new();
+    let mut changed = false;
+    for s in &shapes {
+        let parts = s.path.split_subpaths();
+        if parts.len() > 1 {
+            changed = true;
+        }
+        for p in parts {
+            out.push(Shape { path: p, fill: s.fill, stroke: s.stroke });
+        }
+    }
+    if !changed {
+        return;
+    }
+    let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, out);
     state.editor.apply(Box::new(cmd));
 }
 

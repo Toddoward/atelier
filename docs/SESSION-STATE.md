@@ -3,7 +3,29 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-q (spec 0023 — rasterize vector layer DONE)
+## Last session: 2026-06-13-r (spec 0024 — compound paths DONE)
+
+### Done
+- **Spec 0024 ☑** — `Path::append` / `Path::split_subpaths`; `panels::make_compound_path`
+  (merge layer shapes → one even-odd compound) and `release_compound_path` (split subpaths
+  back), both undoable via SetVectorShapes, with Properties buttons. VEC-8. vector / app 29
+  tests green, clippy clean, smoke clean.
+- ROADMAP Phase 4: compound paths done; remaining vector items are boolean ops + multi-object
+  align/distribute (needs multi-select).
+
+### Next
+1. **Spec 0025 — boolean path ops** (VEC-5): unite/subtract/intersect/exclude. NEW
+   `i_overlay` workspace dep — read its API first (flatten cubics→polygons, op, back to line
+   `Path`); `BooleanOp` command over ≥2 shapes; Pathfinder panel. Still the deferred
+   new-dep task — good fresh start.
+2. Multi-select → multi-object align/distribute; rasterize AA; per-subpath fill memory.
+3. Phase 5 — place image (INT-3), smart objects, z-interleaved raster+vector compositing.
+
+### Watch out (additions)
+- Compound = even-odd combine (gives holes via the tessellator), NOT boolean ops. Release
+  flattens all subpaths to the source shape's fill (no per-subpath fill memory).
+
+## Previous session: 2026-06-13-q (spec 0023 — rasterize vector layer DONE)
 
 ### Done
 - **Spec 0023 ☑** — `rasterize_vector` (tessellate + scan-fill triangles into tiles, no AA);

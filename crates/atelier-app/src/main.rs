@@ -1787,6 +1787,59 @@ mod ui_tests {
         h.run();
     }
 
+    /// Spec 0024: merge shapes into a compound path, then release; both undoable.
+    #[test]
+    fn compound_path_make_and_release() {
+        use atelier_core::atelier_vector::{Path, Shape};
+        let mut h = harness();
+        create_doc(&mut h);
+        let id = {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let content = atelier_core::VectorContent {
+                shapes: vec![
+                    Shape::filled(Path::rect(0.0, 0.0, 10.0, 10.0), [1.0; 4]),
+                    Shape::filled(Path::rect(20.0, 0.0, 10.0, 10.0), [1.0; 4]),
+                ],
+            };
+            let cmd = atelier_core::command::AddNode::new(
+                &mut st.editor.doc,
+                atelier_core::Node::new(
+                    atelier_core::LayerProps::named("v"),
+                    atelier_core::NodeKind::Vector(content),
+                ),
+                root,
+                0,
+            );
+            let id = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(id);
+            id
+        };
+        h.run();
+        let shape_count = |h: &Harness<'static, AtelierApp>| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Vector(c) => c.shapes.len(),
+                _ => panic!(),
+            }
+        };
+        assert_eq!(shape_count(&h), 2);
+
+        panels::make_compound_path(h.state_mut().state.as_mut().unwrap(), id);
+        h.run();
+        assert_eq!(shape_count(&h), 1, "merged into one compound shape");
+
+        panels::release_compound_path(h.state_mut().state.as_mut().unwrap(), id);
+        h.run();
+        assert_eq!(shape_count(&h), 2, "released back into two shapes");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(shape_count(&h), 1, "undo release → compound");
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(shape_count(&h), 2, "undo make → two shapes");
+    }
+
     /// Spec 0023: rasterize a vector layer → raster layer; undo restores vector.
     #[test]
     fn rasterize_vector_layer_and_undo() {
