@@ -99,6 +99,31 @@ impl Mask {
         (x1 > x0).then_some([x0, y0, x1, y1])
     }
 
+    /// Fully-selected mask covering the document rect `[0,0,size)`.
+    pub fn select_all(size: [u32; 2]) -> Mask {
+        let mut m = Mask::new();
+        for y in 0..size[1] as i32 {
+            for x in 0..size[0] as i32 {
+                m.set(x, y, 255);
+            }
+        }
+        m
+    }
+
+    /// Inverse coverage within the document rect (outside the canvas stays 0).
+    pub fn inverted(&self, size: [u32; 2]) -> Mask {
+        let mut m = Mask::new();
+        for y in 0..size[1] as i32 {
+            for x in 0..size[0] as i32 {
+                let v = 255 - self.get(x, y);
+                if v != 0 {
+                    m.set(x, y, v);
+                }
+            }
+        }
+        m
+    }
+
     /// Combine `other` into self (self = existing selection, other = new shape).
     pub fn combine(&mut self, other: &Mask, op: CombineOp) {
         match op {
@@ -192,6 +217,21 @@ mod tests {
         rep.combine(&b, CombineOp::Replace);
         assert_eq!(rep.get(2, 2), 0);
         assert_eq!(rep.get(12, 2), 255);
+    }
+
+    #[test]
+    fn select_all_and_inverted_respect_doc_rect() {
+        let all = Mask::select_all([4, 3]);
+        assert_eq!(all.get(0, 0), 255);
+        assert_eq!(all.get(3, 2), 255);
+        assert_eq!(all.get(4, 0), 0, "outside doc rect");
+
+        let mut sel = Mask::new();
+        sel.set(1, 1, 255);
+        let inv = sel.inverted([4, 3]);
+        assert_eq!(inv.get(1, 1), 0, "selected becomes unselected");
+        assert_eq!(inv.get(0, 0), 255, "unselected becomes selected");
+        assert_eq!(inv.get(10, 10), 0, "outside doc rect stays 0");
     }
 
     #[test]

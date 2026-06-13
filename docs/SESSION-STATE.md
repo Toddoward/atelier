@@ -3,7 +3,36 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-d (spec 0010 — Phase 3 slice d DONE)
+## Last session: 2026-06-13-e (spec 0011 — **PHASE 3 COMPLETE ☑**)
+
+### Done
+- **Spec 0011 ☑** — magic wand + selection ops. `Mask::select_all`/`inverted` (core);
+  `atelier-raster::selection::magic_wand` (BFS flood fill by tolerance), `grow`/`shrink`
+  (chebyshev morphology), `feather` (2-pass box blur). App: Magic Wand tool (W) with
+  tolerance slider + Shift/Alt combine; Select menu (All Ctrl+A / Deselect / Invert
+  Ctrl+Shift+I / Grow / Shrink / Feather). 94 tests, clippy clean, smoke clean.
+- **Phase 3 gate met → Phase 3 ☑.** Selection + adjustment toolset complete.
+- Bug caught by existing test: new global Ctrl+A swallowed rename field's select-all-text;
+  gated selection/adjust shortcuts behind `!ctx.wants_keyboard_input()`.
+
+### Next — PHASE 4 (vector engine), the next major phase
+1. **Spec 0012** — vector path model + GPU tessellated render: `atelier-vector` path type
+   (cubic Béziers, subpaths, fill rule), fill/stroke, lyon tessellation → triangles, a GPU
+   pipeline in `atelier-gpu` to draw them, `NodeKind::Vector` upgraded from PlaceholderArt
+   to a real shape list. Slice it: (a) path model + tessellation (pure, tested), (b) GPU
+   render of filled/stroked paths on the canvas, (c) pen/shape tools + editing.
+2. Then booleans (i_overlay), align/distribute, compound paths (Phase 4 remainder).
+3. Phase 5 (focus modes & raster↔vector interop) after.
+
+### Watch out (additions)
+- Selection/adjust keyboard shortcuts are gated behind `!wants_keyboard_input()`; keep new
+  letter/Ctrl shortcuts on that side unless they should override text fields.
+- `NodeKind::Vector` is still `PlaceholderArt` (rect) — Phase 4 replaces it; the compositor
+  and canvas currently draw vector layers as placeholder rects only.
+- Workspace deps to add in Phase 4: `lyon` (tessellation), `kurbo` (already considered),
+  `i_overlay` (booleans, later slice).
+
+## Previous session: 2026-06-13-d (spec 0010 — Phase 3 slice d DONE)
 
 ### Done
 - **Spec 0010 ☑** — transform/crop/resample. `atelier-raster::resample` (bilinear sample,

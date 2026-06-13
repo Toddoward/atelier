@@ -6,14 +6,14 @@ spec's Verification Log). Do not start phase N+1 with phase N red.
 
 Status legend: ☐ not started · ◐ in progress · ☑ done
 
-Specs written so far: Phase 0 → 0001 ☑ · Phase 1 → 0002 ☑ · Phase 2 → 0003 ☑ + 0004 ☑ + 0005 ☑ + 0006 ☑ (gate met). Phase 3 → 0007 ☑ + 0008 ☑ + 0009 ☑ + 0010 ☑ (transform/crop/resample). Phase 3 remaining: magic wand + feather/grow/invert-selection (one more selection slice) before the phase gate; interactive on-canvas transform handles deferred.
+Specs written so far: Phase 0 → 0001 ☑ · Phase 1 → 0002 ☑ · Phase 2 → 0003 ☑ + 0004 ☑ + 0005 ☑ + 0006 ☑ (gate met). Phase 3 → 0007 ☑ + 0008 ☑ + 0009 ☑ + 0010 ☑ + 0011 ☑ — **Phase 3 complete**. Deferred to later: quick-mask mode, interactive on-canvas transform handles, magnetic lasso, refine-edge.
 
 | # | Phase | Contents (req IDs) | Verify gate | Status |
 |---|-------|--------------------|-------------|--------|
 | 0 | Bootstrap | Workspace scaffold; window + wgpu surface + egui docked panels; CI (build+test, Win x64); empty canvas pan/zoom (SH-1..3) | `cargo build` + `cargo test` green; window opens; panels dock; canvas pans/zooms at 60 fps | ☑ |
 | 1 | Document model | Layer tree, groups, node kinds (stubs ok), command/undo, history panel, `.atl` save/load v0, layers panel UI (DOC-1..4,6,7) | Unit tests for tree ops + undo invariants; save→load→identical; manipulate layers in UI | ☑ |
 | 2 | Raster engine | Tile store, GPU compositor w/ full blend-mode set, CPU reference, brush/eraser, move, canvas resize, region recomposite (RAS-1,2,4,5 subset; DOC-3,8; re-scoped per D-12) | Golden CPU=GPU blend tests; paint+undo correct; 60 fps target doc | ☑ |
-| 3 | Selections & adjustments | Selection tools+combine ops, quick mask, marching ants; core adjustments destructive + adjustment layers; free transform, crop tool, image resample (moved from Phase 2, D-12) (RAS-3,4,5,6; DOC-1) | Mask op unit tests; visual checklist per tool; adjustment layer re-render correctness | ☐ |
+| 3 | Selections & adjustments | Selection tools+combine ops, marching ants, magic wand, feather/grow/shrink/invert/all; core adjustments destructive + adjustment layers; transform, crop, image resample (RAS-3,4,5,6; DOC-1) | Mask op unit tests; per-tool kittest; adjustment layer re-render correctness | ☑ |
 | 4 | Vector engine | Path model, pen/direct-select, shapes, fill/stroke, booleans, align, tessellated GPU render (VEC-1..7) | Boolean op test corpus; crisp zoom; editing checklist | ☐ |
 | 5 | Focus modes & interop | New-doc focus chooser, workspace presets, rasterize vector layer, place image, cross-paste (INT-1..4) | Interop checklist both directions | ☐ |
 | 6 | Color management | lcms2 integration, working spaces, assign/convert, display profile, color picker/swatches (COL-1,2,5,6) | Round-trip ΔE tests vs reference values; visual proof on wide-gamut display path | ☐ |

@@ -22,10 +22,16 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         (ActiveTool::SelectRect, "Select Rect (M)"),
         (ActiveTool::SelectEllipse, "Select Ellipse"),
         (ActiveTool::Lasso, "Lasso (L)"),
+        (ActiveTool::MagicWand, "Magic Wand (W)"),
     ] {
         if ui.selectable_label(state.tool == tool, label).clicked() {
             state.tool = tool;
         }
+    }
+    if state.tool == ActiveTool::MagicWand {
+        ui.separator();
+        ui.label("Tolerance");
+        ui.add(egui::Slider::new(&mut state.brush.wand_tolerance, 0..=128));
     }
     if matches!(state.tool, ActiveTool::Brush | ActiveTool::Eraser) {
         ui.separator();

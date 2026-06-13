@@ -194,6 +194,16 @@ fn handle_tools(
                 }
             }
         }
+        ActiveTool::MagicWand => {
+            if response.clicked() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let d = pointer_doc(pos);
+                    let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
+                    // Defer to the app helper via a queued doc-space click.
+                    state.wand_click = Some(([d[0].floor() as i32, d[1].floor() as i32], shift, alt));
+                }
+            }
+        }
         ActiveTool::SelectRect | ActiveTool::SelectEllipse | ActiveTool::Lasso => {
             if response.drag_started_by(egui::PointerButton::Primary) {
                 // `press_origin` is where the button went down; by drag-start the

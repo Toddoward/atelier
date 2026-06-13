@@ -1,7 +1,131 @@
-//! Selection shape rasterizers and boundary extraction (spec 0007).
+//! Selection shape rasterizers, boundary extraction (spec 0007), and
+//! magic-wand / morphology / feather operations (spec 0011).
 //! All coordinates are doc-space pixels; rects are half-open.
 
-use atelier_core::Mask;
+use atelier_core::{Mask, TileMap};
+use std::collections::VecDeque;
+
+/// Flood-fill select connected doc pixels whose color is within `tolerance`
+/// (max abs channel delta, 0..=255) of the seed pixel. Bounded to the canvas
+/// `size`; samples the layer drawn at `offset`.
+pub fn magic_wand(
+    tiles: &TileMap,
+    offset: [i32; 2],
+    seed: [i32; 2],
+    tolerance: u8,
+    size: [u32; 2],
+) -> Mask {
+    let (w, h) = (size[0] as i32, size[1] as i32);
+    let mut out = Mask::new();
+    if seed[0] < 0 || seed[1] < 0 || seed[0] >= w || seed[1] >= h {
+        return out;
+    }
+    let sample = |x: i32, y: i32| tiles.pixel(x - offset[0], y - offset[1]);
+    let matches = |a: [u8; 4], b: [u8; 4]| {
+        (0..4).all(|i| (a[i] as i32 - b[i] as i32).unsigned_abs() <= tolerance as u32)
+    };
+    let target = sample(seed[0], seed[1]);
+
+    let mut visited = vec![false; (w * h) as usize];
+    let mut q = VecDeque::new();
+    let idx = |x: i32, y: i32| (y * w + x) as usize;
+    visited[idx(seed[0], seed[1])] = true;
+    q.push_back(seed);
+    while let Some([x, y]) = q.pop_front() {
+        out.set(x, y, 255);
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let (nx, ny) = (x + dx, y + dy);
+            if nx < 0 || ny < 0 || nx >= w || ny >= h || visited[idx(nx, ny)] {
+                continue;
+            }
+            visited[idx(nx, ny)] = true;
+            if matches(sample(nx, ny), target) {
+                q.push_back([nx, ny]);
+            }
+        }
+    }
+    out
+}
+
+/// Chebyshev dilate (grow) the selection by `r` pixels.
+pub fn grow(mask: &Mask, r: i32) -> Mask {
+    morph(mask, r, true)
+}
+
+/// Chebyshev erode (shrink) the selection by `r` pixels.
+pub fn shrink(mask: &Mask, r: i32) -> Mask {
+    morph(mask, r, false)
+}
+
+fn morph(mask: &Mask, r: i32, dilate: bool) -> Mask {
+    let Some([x0, y0, x1, y1]) = mask.bounds() else { return Mask::new() };
+    let mut out = Mask::new();
+    // Dilate can extend beyond current bounds by r; erode stays within.
+    let pad = if dilate { r } else { 0 };
+    for y in (y0 - pad)..(y1 + pad) {
+        for x in (x0 - pad)..(x1 + pad) {
+            let mut acc = if dilate { 0u8 } else { 255u8 };
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    let v = mask.get(x + dx, y + dy);
+                    acc = if dilate { acc.max(v) } else { acc.min(v) };
+                }
+            }
+            if acc != 0 {
+                out.set(x, y, acc);
+            }
+        }
+    }
+    out
+}
+
+/// Soften selection edges with two box-blur passes (separable) of radius `r`.
+pub fn feather(mask: &Mask, r: i32) -> Mask {
+    if r <= 0 {
+        return mask.clone();
+    }
+    let Some([x0, y0, x1, y1]) = mask.bounds() else { return Mask::new() };
+    let (px0, py0, px1, py1) = (x0 - r, y0 - r, x1 + r, y1 + r);
+    let (w, h) = ((px1 - px0) as usize, (py1 - py0) as usize);
+    let at = |buf: &[u16], x: usize, y: usize| buf[y * w + x] as u32;
+
+    // Load into a local buffer.
+    let mut a = vec![0u16; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            a[y * w + x] = mask.get(px0 + x as i32, py0 + y as i32) as u16;
+        }
+    }
+    let win = (2 * r + 1) as u32;
+    // Horizontal pass.
+    let mut b = vec![0u16; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum = 0u32;
+            for dx in -r..=r {
+                let sx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize;
+                sum += at(&a, sx, y);
+            }
+            b[y * w + x] = (sum / win) as u16;
+        }
+    }
+    // Vertical pass.
+    let mut out = Mask::new();
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum = 0u32;
+            for dy in -r..=r {
+                let sy = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
+                sum += at(&b, x, sy);
+            }
+            let v = (sum / win) as u8;
+            if v != 0 {
+                out.set(px0 + x as i32, py0 + y as i32, v);
+            }
+        }
+    }
+    out
+}
 
 /// Axis-aligned rect with antialiased fractional edges.
 pub fn rect_mask(x0: f32, y0: f32, x1: f32, y1: f32) -> Mask {
@@ -134,6 +258,43 @@ mod tests {
         assert_eq!(m.get(3, 3), 255, "inside triangle");
         assert_eq!(m.get(15, 15), 0, "outside hypotenuse");
         assert!(polygon_mask(&[[0.0, 0.0], [1.0, 1.0]]).is_empty(), "degenerate");
+    }
+
+    #[test]
+    fn magic_wand_selects_region_not_background() {
+        // Left half red, right half blue; wand on the left selects only red.
+        let mut tiles = TileMap::new();
+        tiles.fill_rect(0, 0, 10, 10, [255, 0, 0, 255]);
+        tiles.fill_rect(10, 0, 20, 10, [0, 0, 255, 255]);
+        let sel = magic_wand(&tiles, [0, 0], [3, 3], 10, [20, 10]);
+        assert_eq!(sel.get(3, 3), 255, "seed region selected");
+        assert_eq!(sel.get(9, 5), 255, "rest of red selected");
+        assert_eq!(sel.get(15, 5), 0, "blue not selected");
+    }
+
+    #[test]
+    fn grow_then_shrink_approximates_original() {
+        let m = rect_mask(20.0, 20.0, 40.0, 40.0);
+        let grown = grow(&m, 2);
+        assert_eq!(grown.get(18, 30), 255, "grew left by 2");
+        let back = shrink(&grown, 2);
+        // Interior identical; edges restored to ~original extent.
+        assert_eq!(back.get(30, 30), 255);
+        assert_eq!(back.get(18, 30), 0, "shrink undid the grow at the edge");
+    }
+
+    #[test]
+    fn feather_softens_a_hard_edge() {
+        let m = rect_mask(0.0, 0.0, 40.0, 40.0);
+        let f = feather(&m, 3);
+        // Somewhere near the right edge there is partial coverage.
+        let partial = (0..40).any(|y| {
+            (35..45).any(|x| {
+                let v = f.get(x, y);
+                v > 0 && v < 255
+            })
+        });
+        assert!(partial, "feather produced a soft edge");
     }
 
     #[test]

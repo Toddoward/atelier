@@ -44,6 +44,7 @@ pub enum ActiveTool {
     SelectRect,
     SelectEllipse,
     Lasso,
+    MagicWand,
 }
 
 /// Brush/eraser options (Tools panel).
@@ -51,11 +52,13 @@ pub struct BrushSettings {
     pub radius: f32,
     pub hardness: f32,
     pub color: [f32; 4],
+    /// Magic-wand color tolerance (0..=255).
+    pub wand_tolerance: u8,
 }
 
 impl Default for BrushSettings {
     fn default() -> Self {
-        Self { radius: 16.0, hardness: 0.8, color: [0.1, 0.1, 0.1, 1.0] }
+        Self { radius: 16.0, hardness: 0.8, color: [0.1, 0.1, 0.1, 1.0], wand_tolerance: 32 }
     }
 }
 
@@ -87,6 +90,9 @@ pub struct EditorState {
     pub select_drag: Option<SelectDrag>,
     /// Marching-ants boundary cache, keyed by history revision (spec 0007).
     pub ants: Option<(u64, AntSegments)>,
+    /// Pending magic-wand click (doc pixel, shift, alt) — drained by the app
+    /// loop into `magic_wand_at` (canvas can't borrow the app helper).
+    pub wand_click: Option<([i32; 2], bool, bool)>,
 }
 
 /// Doc-space unit segments outlining the selection boundary.
@@ -229,6 +235,7 @@ impl AtelierApp {
                     dirty_patch: None,
                     select_drag: None,
                     ants: None,
+                    wand_click: None,
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -324,6 +331,66 @@ impl AtelierApp {
             }
         }
         let cmd = atelier_core::command::ResizeImage::new(&st.editor.doc, new_size, baked);
+        st.editor.apply(Box::new(cmd));
+    }
+
+    /// Magic-wand select at a doc pixel, combining per modifiers.
+    fn magic_wand_at(&mut self, doc: [i32; 2], shift: bool, alt: bool) {
+        use atelier_core::{CombineOp, NodeKind};
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let (tiles, offset) = match &st.editor.doc.node(id).map(|n| &n.kind) {
+            Some(NodeKind::Raster(c)) => (c.tiles.clone(), c.offset),
+            _ => return,
+        };
+        let size = st.editor.doc.size;
+        let shape = atelier_raster::selection::magic_wand(
+            &tiles,
+            offset,
+            doc,
+            st.brush.wand_tolerance,
+            size,
+        );
+        let op = match (shift, alt) {
+            (true, true) => CombineOp::Intersect,
+            (true, false) => CombineOp::Add,
+            (false, true) => CombineOp::Subtract,
+            (false, false) => CombineOp::Replace,
+        };
+        let combined = match (&st.editor.doc.selection, op) {
+            (Some(cur), op) if op != CombineOp::Replace => {
+                let mut m = (**cur).clone();
+                m.combine(&shape, op);
+                m
+            }
+            _ => shape,
+        };
+        let new = (!combined.is_empty()).then(|| std::sync::Arc::new(combined));
+        if new.is_none() && st.editor.doc.selection.is_none() {
+            return;
+        }
+        let cmd = atelier_core::command::SetSelection::new(&st.editor.doc, new, "Magic Wand");
+        st.editor.apply(Box::new(cmd));
+    }
+
+    /// Replace the selection with a transformed version of itself (Select menu).
+    fn set_selection<F: FnOnce(&atelier_core::Mask, [u32; 2]) -> Option<atelier_core::Mask>>(
+        &mut self,
+        label: &str,
+        f: F,
+    ) {
+        let Some(st) = &mut self.state else { return };
+        let size = st.editor.doc.size;
+        let cur = st.editor.doc.selection.clone();
+        let new = match &cur {
+            Some(m) => f(m, size),
+            None => f(&atelier_core::Mask::new(), size),
+        };
+        let arc = new.filter(|m| !m.is_empty()).map(std::sync::Arc::new);
+        if arc.is_none() && cur.is_none() {
+            return;
+        }
+        let cmd = atelier_core::command::SetSelection::new(&st.editor.doc, arc, label);
         st.editor.apply(Box::new(cmd));
     }
 
@@ -436,15 +503,30 @@ impl AtelierApp {
             self.request_open();
         }
 
-        // Invert (Ctrl+I).
+        // Selection/adjust shortcuts must yield to focused text fields (e.g.
+        // Ctrl+A select-all-text during a layer rename).
+        let editing_text = ctx.wants_keyboard_input();
+
+        // Invert image (Ctrl+I) vs invert selection (Ctrl+Shift+I).
+        let invert_sel = KeyboardShortcut::new(CMD.plus(Modifiers::SHIFT), Key::I);
         let invert = KeyboardShortcut::new(CMD, Key::I);
-        if ctx.input_mut(|i| i.consume_shortcut(&invert)) {
-            self.apply_adjustment(atelier_raster::Adjustment::Invert);
+        let select_all = KeyboardShortcut::new(CMD, Key::A);
+        if !editing_text {
+            if ctx.input_mut(|i| i.consume_shortcut(&invert_sel)) {
+                self.set_selection("Invert Selection", |m, size| Some(m.inverted(size)));
+            } else if ctx.input_mut(|i| i.consume_shortcut(&invert)) {
+                self.apply_adjustment(atelier_raster::Adjustment::Invert);
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&select_all)) {
+                self.set_selection("Select All", |_, size| {
+                    Some(atelier_core::Mask::select_all(size))
+                });
+            }
         }
 
         // Deselect (Ctrl+D).
         let deselect = KeyboardShortcut::new(CMD, Key::D);
-        if ctx.input_mut(|i| i.consume_shortcut(&deselect)) {
+        if !editing_text && ctx.input_mut(|i| i.consume_shortcut(&deselect)) {
             if let Some(st) = &mut self.state {
                 if st.editor.doc.selection.is_some() {
                     let cmd = atelier_core::command::SetSelection::new(
@@ -475,6 +557,9 @@ impl AtelierApp {
                     }
                     if i.key_pressed(Key::L) {
                         st.tool = ActiveTool::Lasso;
+                    }
+                    if i.key_pressed(Key::W) {
+                        st.tool = ActiveTool::MagicWand;
                     }
                 });
             }
@@ -567,6 +652,47 @@ impl AtelierApp {
                             }
                         }
                     });
+                });
+                ui.menu_button("Select", |ui| {
+                    let has = self.state.is_some();
+                    let has_sel =
+                        self.state.as_ref().is_some_and(|s| s.editor.doc.selection.is_some());
+                    if ui.add_enabled(has, egui::Button::new("All\t(Ctrl+A)")).clicked() {
+                        self.set_selection("Select All", |_, size| {
+                            Some(atelier_core::Mask::select_all(size))
+                        });
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(has_sel, egui::Button::new("Deselect\t(Ctrl+D)")).clicked() {
+                        self.set_selection("Deselect", |_, _| None);
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new("Invert\t(Ctrl+Shift+I)"))
+                        .clicked()
+                    {
+                        self.set_selection("Invert Selection", |m, size| Some(m.inverted(size)));
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.add_enabled(has_sel, egui::Button::new("Grow")).clicked() {
+                        self.set_selection("Grow Selection", |m, _| {
+                            Some(atelier_raster::selection::grow(m, 2))
+                        });
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(has_sel, egui::Button::new("Shrink")).clicked() {
+                        self.set_selection("Shrink Selection", |m, _| {
+                            Some(atelier_raster::selection::shrink(m, 2))
+                        });
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(has_sel, egui::Button::new("Feather")).clicked() {
+                        self.set_selection("Feather Selection", |m, _| {
+                            Some(atelier_raster::selection::feather(m, 3))
+                        });
+                        ui.close_menu();
+                    }
                 });
                 ui.menu_button("Adjust", |ui| {
                     use atelier_raster::Adjustment;
@@ -661,6 +787,7 @@ impl AtelierApp {
                     dirty_patch: None,
                     select_drag: None,
                     ants: None,
+                    wand_click: None,
             });
             self.viewport = Viewport::default();
         } else if cancel {
@@ -908,6 +1035,11 @@ impl AtelierApp {
         DockArea::new(&mut self.dock)
             .style(egui_dock::Style::from_egui(ctx.style().as_ref()))
             .show(ctx, &mut tabs);
+
+        // Drain a queued magic-wand click (canvas can't call the app helper).
+        if let Some((doc, shift, alt)) = self.state.as_mut().and_then(|s| s.wand_click.take()) {
+            self.magic_wand_at(doc, shift, alt);
+        }
 
         self.sync_title(ctx);
     }
@@ -1407,6 +1539,50 @@ mod ui_tests {
             st.composite.as_ref().unwrap().0,
             rev,
             "viewport changes never recomposite"
+        );
+    }
+
+    #[test]
+    fn magic_wand_select_all_and_invert() {
+        let mut h = harness();
+        create_doc(&mut h); // 64×64
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            // Left half red, right half blue.
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(0, 0, 32, 64, [255, 0, 0, 255]);
+                t.fill_rect(32, 0, 64, 64, [0, 0, 255, 255]);
+                c.tiles = t;
+            }
+        }
+
+        // Magic wand on the red half.
+        h.state_mut().magic_wand_at([5, 5], false, false);
+        h.run();
+        {
+            let sel = h.state().state.as_ref().unwrap().editor.doc.selection.clone().unwrap();
+            assert_eq!(sel.get(5, 5), 255, "red selected");
+            assert_eq!(sel.get(50, 5), 0, "blue not selected");
+        }
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_none(), "wand undone");
+
+        // Select All then Invert.
+        send_key(&mut h, egui::Key::A, egui::Modifiers::COMMAND);
+        {
+            let sel = h.state().state.as_ref().unwrap().editor.doc.selection.clone().unwrap();
+            assert_eq!(sel.get(0, 0), 255);
+            assert_eq!(sel.get(63, 63), 255);
+        }
+        h.state_mut().set_selection("Invert Selection", |m, size| Some(m.inverted(size)));
+        h.run();
+        // Inverting a full selection clears it.
+        assert!(
+            h.state().state.as_ref().unwrap().editor.doc.selection.is_none(),
+            "invert of select-all is empty"
         );
     }
 
