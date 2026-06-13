@@ -28,6 +28,7 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         (ActiveTool::ShapePolygon, "Polygon"),
         (ActiveTool::ShapeStar, "Star"),
         (ActiveTool::Pen, "Pen (P)"),
+        (ActiveTool::DirectSelect, "Direct Select (A)"),
     ] {
         if ui.selectable_label(state.tool == tool, label).clicked() {
             state.tool = tool;

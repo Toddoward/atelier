@@ -50,6 +50,7 @@ pub enum ActiveTool {
     ShapePolygon,
     ShapeStar,
     Pen,
+    DirectSelect,
 }
 
 /// Which primitive a shape-tool drag produces (spec 0014/0015).
@@ -136,6 +137,8 @@ pub struct EditorState {
     pub pending_shape: Option<(ShapeKind, [f32; 2], [f32; 2])>,
     /// In-progress pen path anchors in doc space (spec 0016).
     pub pen_points: Vec<[f32; 2]>,
+    /// Active direct-select anchor drag: (shape index, anchor index) (spec 0017).
+    pub anchor_drag: Option<(usize, usize)>,
 }
 
 /// Doc-space unit segments outlining the selection boundary.
@@ -282,6 +285,7 @@ impl AtelierApp {
                     vector_cache: None,
                     pending_shape: None,
                     pen_points: Vec::new(),
+                    anchor_drag: None,
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -654,6 +658,9 @@ impl AtelierApp {
                     if i.key_pressed(Key::W) {
                         st.tool = ActiveTool::MagicWand;
                     }
+                    if i.key_pressed(Key::A) {
+                        st.tool = ActiveTool::DirectSelect;
+                    }
                 });
             }
         }
@@ -884,6 +891,7 @@ impl AtelierApp {
                     vector_cache: None,
                     pending_shape: None,
                     pen_points: Vec::new(),
+                    anchor_drag: None,
             });
             self.viewport = Viewport::default();
         } else if cancel {

@@ -165,6 +165,45 @@ impl Path {
         b.build()
     }
 
+    /// On-path anchor points (subpath starts + each segment endpoint), in
+    /// traversal order. Bézier control handles are not anchors (spec 0017).
+    pub fn anchors(&self) -> Vec<Point> {
+        let mut out = Vec::new();
+        for sp in &self.subpaths {
+            out.push(sp.start);
+            for s in &sp.segs {
+                out.push(match s {
+                    Seg::Line(p) => *p,
+                    Seg::Cubic(_, _, p) => *p,
+                });
+            }
+        }
+        out
+    }
+
+    /// Move the anchor at `index` (order matches [`anchors`]) to `to`.
+    /// Translates a cubic segment's endpoint without moving its handles.
+    pub fn move_anchor(&mut self, index: usize, to: Point) {
+        let mut i = 0;
+        for sp in &mut self.subpaths {
+            if i == index {
+                sp.start = to;
+                return;
+            }
+            i += 1;
+            for s in &mut sp.segs {
+                if i == index {
+                    match s {
+                        Seg::Line(p) => *p = to,
+                        Seg::Cubic(_, _, p) => *p = to,
+                    }
+                    return;
+                }
+                i += 1;
+            }
+        }
+    }
+
     /// Tight-ish bounds over anchor + control points (control hull, not exact
     /// curve extrema — sufficient for culling/placement).
     pub fn bounds(&self) -> Option<[f32; 4]> {
@@ -227,6 +266,39 @@ mod tests {
         assert_eq!(p.subpaths[0].segs.len(), 9);
         let b = p.bounds().unwrap();
         assert!((b[3]).abs() <= 10.001 && (b[1]) >= -10.001);
+    }
+
+    #[test]
+    fn anchors_and_move_anchor() {
+        let mut p = Path::rect(0.0, 0.0, 10.0, 10.0);
+        // rect = start + 3 line segs = 4 anchors.
+        let a = p.anchors();
+        assert_eq!(a.len(), 4);
+        assert_eq!(a[0], [0.0, 0.0]);
+        assert_eq!(a[2], [10.0, 10.0]);
+        // Move the start anchor and a seg endpoint.
+        p.move_anchor(0, [-5.0, -5.0]);
+        p.move_anchor(2, [20.0, 20.0]);
+        let a = p.anchors();
+        assert_eq!(a[0], [-5.0, -5.0]);
+        assert_eq!(a[2], [20.0, 20.0]);
+        // Out-of-range index is a no-op.
+        let before = p.clone();
+        p.move_anchor(99, [1.0, 1.0]);
+        assert_eq!(p, before);
+    }
+
+    #[test]
+    fn move_anchor_keeps_cubic_handles() {
+        let mut p = Path::ellipse(0.0, 0.0, 10.0, 10.0);
+        // anchors = start + 4 cubic endpoints = 5.
+        assert_eq!(p.anchors().len(), 5);
+        let Seg::Cubic(c1, c2, _) = p.subpaths[0].segs[0] else { panic!("cubic") };
+        p.move_anchor(1, [3.0, 3.0]); // first cubic endpoint
+        assert_eq!(p.anchors()[1], [3.0, 3.0]);
+        let Seg::Cubic(n1, n2, e) = p.subpaths[0].segs[0] else { panic!("cubic") };
+        assert_eq!((n1, n2), (c1, c2), "handles unchanged");
+        assert_eq!(e, [3.0, 3.0]);
     }
 
     #[test]

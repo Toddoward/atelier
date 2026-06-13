@@ -3,7 +3,30 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-j (spec 0016 — pen tool DONE)
+## Last session: 2026-06-13-k (spec 0017 — direct-select anchor editing DONE)
+
+### Done
+- **Spec 0017 ☑** — Direct Select tool (A): drag an on-path anchor of the selected vector
+  layer to reshape it, live + undoable (merged → one entry per drag), anchor-dot overlay.
+  Added `Path::anchors()` / `Path::move_anchor()` (cubic handles preserved) and the
+  mergeable `SetVectorShapes` command. First editing of existing vector geometry. core 36 /
+  app 25 / vector tests green, clippy clean, smoke clean.
+- ROADMAP Phase 4 = ◐ (slices a,b,c1,c1b,c2a,c2b done).
+
+### Next — Phase 4 continues
+1. **Spec 0018 (slice c2c)** — bezier control-handle drag (convert line↔curve), add/remove
+   anchor on an existing path, marquee anchor multi-select. Builds on `SetVectorShapes` +
+   the DirectSelect hit-testing; will need handle hit-testing + a `Seg` line↔cubic swap.
+2. Booleans (i_overlay: unite/subtract/intersect/exclude), align/distribute, compound paths.
+3. Phase 5 — focus modes & raster↔vector interop (z-interleaving; vectors currently overlay).
+
+### Watch out (additions)
+- DirectSelect hit-testing is screen-space (~10 px); app-level drag is manual-verified
+  (headless kittest can't cheaply reconstruct the canvas screen mapping) — editing math +
+  command are unit-covered.
+- `SetVectorShapes` snapshots the whole shapes vec per edit (fine at current sizes).
+
+## Previous session: 2026-06-13-j (spec 0016 — pen tool DONE)
 
 ### Done
 - **Spec 0016 ☑** — Pen tool (P): click to drop straight-line anchors, close by clicking

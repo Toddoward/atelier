@@ -3,7 +3,7 @@
 //! revision changes (spec 0004).
 
 use crate::{ActiveTool, EditorState, SelectDrag, StrokeState};
-use atelier_core::command::{PaintTiles, SetOffset, SetSelection};
+use atelier_core::command::{PaintTiles, SetOffset, SetSelection, SetVectorShapes};
 use atelier_core::{CombineOp, NodeId, NodeKind};
 use atelier_gpu::{CheckerParams, CheckerboardRenderer, Viewport};
 use atelier_raster::{selection, BrushParams};
@@ -272,6 +272,52 @@ fn handle_tools(
                 }
             }
         }
+        ActiveTool::DirectSelect => {
+            // Drag an on-path anchor of the selected vector layer.
+            let Some(id) = state.editor.selection else { return };
+            let shapes = match state.editor.doc.node(id).map(|n| &n.kind) {
+                Some(NodeKind::Vector(c)) => c.shapes.clone(),
+                _ => return,
+            };
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                let press = ui
+                    .input(|i| i.pointer.press_origin())
+                    .or_else(|| response.interact_pointer_pos());
+                if let Some(p) = press {
+                    let t = vp.doc_to_screen(pointer_doc(p));
+                    let mut best: Option<((usize, usize), f32)> = None;
+                    for (si, sh) in shapes.iter().enumerate() {
+                        for (ai, a) in sh.path.anchors().iter().enumerate() {
+                            let s = vp.doc_to_screen(*a);
+                            let d = ((s[0] - t[0]).powi(2) + (s[1] - t[1]).powi(2)).sqrt();
+                            if d < 10.0 && best.is_none_or(|(_, bd)| d < bd) {
+                                best = Some(((si, ai), d));
+                            }
+                        }
+                    }
+                    if let Some((idx, _)) = best {
+                        state.anchor_drag = Some(idx);
+                        state.editor.history.set_merging(true);
+                    }
+                }
+            }
+            if response.dragged_by(egui::PointerButton::Primary) {
+                if let (Some((si, ai)), Some(pos)) =
+                    (state.anchor_drag, response.interact_pointer_pos())
+                {
+                    let to = pointer_doc(pos);
+                    let mut new_shapes = shapes.clone();
+                    new_shapes[si].path.move_anchor(ai, to);
+                    let cmd = SetVectorShapes::new(&state.editor.doc, id, new_shapes);
+                    state.editor.apply(Box::new(cmd));
+                }
+            }
+            if response.drag_stopped_by(egui::PointerButton::Primary)
+                && state.anchor_drag.take().is_some()
+            {
+                state.editor.history.set_merging(false);
+            }
+        }
         ActiveTool::Pen => {
             // Click drops an anchor; clicking near the first anchor closes.
             if response.clicked() {
@@ -518,6 +564,26 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
                 painter.add(egui::Shape::line(pts, stroke));
             }
             _ => {}
+        }
+    }
+
+    // Direct-select: show draggable anchor dots on the selected vector layer.
+    if state.tool == ActiveTool::DirectSelect {
+        if let Some(node) = state.editor.selection.and_then(|id| state.editor.doc.node(id)) {
+            if let NodeKind::Vector(c) = &node.kind {
+                for sh in &c.shapes {
+                    for a in sh.path.anchors() {
+                        let s = vp.doc_to_screen(a);
+                        let p = rect.min + egui::vec2(s[0], s[1]);
+                        painter.circle_filled(p, 3.5, egui::Color32::WHITE);
+                        painter.circle_stroke(
+                            p,
+                            3.5,
+                            egui::Stroke::new(1.0, egui::Color32::from_rgb(90, 170, 255)),
+                        );
+                    }
+                }
+            }
         }
     }
 

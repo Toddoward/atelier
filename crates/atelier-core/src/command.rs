@@ -523,6 +523,55 @@ impl Command for CropCanvas {
     }
 }
 
+/// Replace a vector layer's shapes (direct-select anchor edits — spec 0017).
+/// Snapshots the whole shapes vec; mergeable so one drag = one undo entry.
+#[derive(Debug)]
+pub struct SetVectorShapes {
+    pub id: NodeId,
+    pub old: Vec<crate::atelier_vector::Shape>,
+    pub new: Vec<crate::atelier_vector::Shape>,
+}
+
+impl SetVectorShapes {
+    pub fn new(doc: &Document, id: NodeId, new: Vec<crate::atelier_vector::Shape>) -> Self {
+        let old = match &doc.node(id).expect("node present").kind {
+            crate::NodeKind::Vector(c) => c.shapes.clone(),
+            _ => panic!("SetVectorShapes on non-vector node"),
+        };
+        Self { id, old, new }
+    }
+
+    fn set(&self, doc: &mut Document, shapes: Vec<crate::atelier_vector::Shape>) {
+        if let crate::NodeKind::Vector(c) = &mut doc.node_mut(self.id).expect("node").kind {
+            c.shapes = shapes;
+        }
+    }
+}
+
+impl Command for SetVectorShapes {
+    fn label(&self) -> String {
+        "Edit Path".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.set(doc, self.new.clone());
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        self.set(doc, self.old.clone());
+    }
+    fn try_merge(&mut self, next: &dyn Any) -> bool {
+        if let Some(n) = next.downcast_ref::<Self>() {
+            if n.id == self.id {
+                self.new = n.new.clone();
+                return true;
+            }
+        }
+        false
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Document canvas resize (anchor top-left; no resampling — RAS-5 subset).
 #[derive(Debug)]
 pub struct CanvasResize {
@@ -668,6 +717,41 @@ mod tests {
         assert_eq!(doc.size, [16, 16]);
         cmd.revert(&mut doc);
         assert_eq!(doc, baseline);
+    }
+
+    #[test]
+    fn set_vector_shapes_apply_revert_and_merge() {
+        use crate::atelier_vector::{Path, Shape};
+        let mut doc = Document::new([32, 32], ProjectFocus::Raster);
+        let root = doc.root();
+        let orig = vec![Shape::filled(Path::rect(0.0, 0.0, 10.0, 10.0), [1.0; 4])];
+        let mut add = AddNode::new(
+            &mut doc,
+            Node::new(
+                LayerProps::named("v"),
+                NodeKind::Vector(crate::VectorContent { shapes: orig.clone() }),
+            ),
+            root,
+            0,
+        );
+        add.apply(&mut doc);
+        let id = add.id;
+        let baseline = doc.clone();
+
+        let mut edited = orig.clone();
+        edited[0].path.move_anchor(0, [-5.0, -5.0]);
+        let mut cmd = SetVectorShapes::new(&doc, id, edited.clone());
+        cmd.apply(&mut doc);
+        match &doc.node(id).unwrap().kind {
+            NodeKind::Vector(c) => assert_eq!(c.shapes[0].path.anchors()[0], [-5.0, -5.0]),
+            _ => panic!(),
+        }
+        cmd.revert(&mut doc);
+        assert_eq!(doc, baseline);
+
+        // Merge coalesces same-target edits (one undo per drag).
+        let next = SetVectorShapes::new(&doc, id, edited);
+        assert!(cmd.try_merge(next.as_any()));
     }
 
     #[test]
