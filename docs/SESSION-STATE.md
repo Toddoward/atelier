@@ -3,7 +3,28 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-m (spec 0019 — segment-click insert DONE)
+## Last session: 2026-06-13-n (spec 0020 — bezier handle model DONE)
+
+### Done
+- **Spec 0020 ☑** — `Path::set_out_handle` / `set_in_handle`: set an anchor's outgoing/incoming
+  bezier control point, converting the adjacent Line→Cubic (endpoints preserved, boundary
+  no-ops). Pure model layer for the handle-drag UI. 15 vector tests, workspace green, clippy
+  clean. (Model-only slice — no app wiring, so no smoke change.)
+- ROADMAP Phase 4 = ◐ (through slice c2e-model).
+
+### Next — Phase 4 continues
+1. **Spec 0021 (slice c2f)** — on-canvas handle UI: render in/out handles for the selected
+   anchor(s) in Direct Select, hit-test + drag them (via `set_out_handle`/`set_in_handle` +
+   merged `SetVectorShapes`), with symmetric-handle default. Then curves are fully editable.
+2. Booleans (i_overlay dep), align/distribute, compound paths; closing-edge-as-real-segment
+   (needed for closing-edge handles + clean boolean input).
+3. Phase 5 — focus modes & raster↔vector interop.
+
+### Watch out (additions)
+- Handle primitives only touch STORED segments; a closed subpath's implicit closing edge has
+  no segment, so its handles/inserts are unsupported until close becomes a real segment.
+
+## Previous session: 2026-06-13-m (spec 0019 — segment-click insert DONE)
 
 ### Done
 - **Spec 0019 ☑** — `Path::closest_segment` (nearest point on lines/cubics → split anchor

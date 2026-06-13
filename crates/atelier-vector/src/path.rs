@@ -252,6 +252,61 @@ impl Path {
         false
     }
 
+    /// Anchor point at global `index` (None if out of range).
+    fn anchor_point(&self, index: usize) -> Option<Point> {
+        self.anchors().get(index).copied()
+    }
+
+    /// Set the outgoing bezier control handle of the anchor at `index`,
+    /// converting its outgoing segment to a cubic if it was a line. No-op if the
+    /// anchor has no outgoing segment (subpath end). Spec 0020.
+    pub fn set_out_handle(&mut self, index: usize, handle: Point) -> bool {
+        let mut i = 0;
+        for sp in &mut self.subpaths {
+            let n = 1 + sp.segs.len();
+            if index < i + n {
+                let local = index - i;
+                if local >= sp.segs.len() {
+                    return false; // no outgoing segment
+                }
+                let (end, c2) = match sp.segs[local] {
+                    Seg::Line(p) => (p, p),
+                    Seg::Cubic(_, c2, p) => (p, c2),
+                };
+                sp.segs[local] = Seg::Cubic(handle, c2, end);
+                return true;
+            }
+            i += n;
+        }
+        false
+    }
+
+    /// Set the incoming bezier control handle of the anchor at `index`,
+    /// converting its incoming segment to a cubic if it was a line. No-op for a
+    /// subpath start (no incoming segment). Spec 0020.
+    pub fn set_in_handle(&mut self, index: usize, handle: Point) -> bool {
+        // Need the start point of the incoming segment (the previous anchor).
+        let prev_pt = if index == 0 { None } else { self.anchor_point(index - 1) };
+        let mut i = 0;
+        for sp in &mut self.subpaths {
+            let n = 1 + sp.segs.len();
+            if index < i + n {
+                let local = index - i;
+                if local == 0 {
+                    return false; // subpath start has no incoming segment
+                }
+                let (end, c1) = match sp.segs[local - 1] {
+                    Seg::Line(p) => (p, prev_pt.unwrap_or(p)),
+                    Seg::Cubic(c1, _, p) => (p, c1),
+                };
+                sp.segs[local - 1] = Seg::Cubic(c1, handle, end);
+                return true;
+            }
+            i += n;
+        }
+        false
+    }
+
     /// Nearest point on the path's segments to `query`. Returns
     /// `(anchor_index, distance)` where `anchor_index` is the index to pass to
     /// [`insert_anchor`] to split that segment (its endpoint anchor). Lines are
@@ -408,6 +463,35 @@ mod tests {
         // Can't insert before a subpath start, OOB is a no-op.
         assert!(!p.insert_anchor(0, [1.0, 1.0]));
         assert!(!p.remove_anchor(99));
+    }
+
+    #[test]
+    fn set_handles_convert_line_to_cubic() {
+        let mut p = Path::rect(0.0, 0.0, 10.0, 10.0);
+        // Outgoing handle of anchor 0 → first segment becomes a cubic, endpoint kept.
+        assert!(p.set_out_handle(0, [3.0, -3.0]));
+        match p.subpaths[0].segs[0] {
+            Seg::Cubic(c1, _, end) => {
+                assert_eq!(c1, [3.0, -3.0]);
+                assert_eq!(end, [10.0, 0.0], "endpoint preserved");
+            }
+            _ => panic!("expected cubic"),
+        }
+        // Anchor count unchanged by adding handles.
+        assert_eq!(p.anchors().len(), 4);
+
+        // Incoming handle of anchor 2 → second segment becomes a cubic.
+        assert!(p.set_in_handle(2, [12.0, 5.0]));
+        match p.subpaths[0].segs[1] {
+            Seg::Cubic(_, c2, end) => {
+                assert_eq!(c2, [12.0, 5.0]);
+                assert_eq!(end, [10.0, 10.0]);
+            }
+            _ => panic!("expected cubic"),
+        }
+        // No outgoing segment at the last anchor; no incoming at the start.
+        assert!(!p.set_out_handle(3, [0.0, 0.0]));
+        assert!(!p.set_in_handle(0, [0.0, 0.0]));
     }
 
     #[test]
