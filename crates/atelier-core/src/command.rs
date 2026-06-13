@@ -572,6 +572,128 @@ impl Command for SetVectorShapes {
     }
 }
 
+/// Group sibling nodes under a new group (DOC-2, spec 0028). All `ids` must
+/// share a parent. The group takes the position of the topmost member; members
+/// keep their relative order inside it.
+#[derive(Debug)]
+pub struct GroupNodes {
+    ids: Vec<NodeId>,
+    group_id: NodeId,
+    name: String,
+    /// Captured on apply for an exact revert.
+    parent: Option<NodeId>,
+    original_children: Vec<NodeId>,
+    label: String,
+}
+
+impl GroupNodes {
+    /// Returns None if `ids` is empty or not all siblings under one parent.
+    pub fn new(doc: &mut Document, ids: &[NodeId], name: impl Into<String>) -> Option<Self> {
+        let first = *ids.first()?;
+        let parent = doc.node(first)?.parent?;
+        if !ids.iter().all(|&i| doc.node(i).map(|n| n.parent) == Some(Some(parent))) {
+            return None;
+        }
+        Some(Self {
+            ids: ids.to_vec(),
+            group_id: doc.alloc_id(),
+            name: name.into(),
+            parent: None,
+            original_children: Vec::new(),
+            label: "Group Layers".into(),
+        })
+    }
+
+    pub fn group_id(&self) -> NodeId {
+        self.group_id
+    }
+}
+
+impl Command for GroupNodes {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        let parent = doc.node(self.ids[0]).expect("member present").parent.expect("non-root");
+        let siblings = doc.children(parent).to_vec();
+        self.parent = Some(parent);
+        self.original_children = siblings.clone();
+        // Members in their current sibling order; group goes where the topmost sits.
+        let members: Vec<NodeId> =
+            siblings.iter().copied().filter(|c| self.ids.contains(c)).collect();
+        let g_index = siblings
+            .iter()
+            .position(|c| self.ids.contains(c))
+            .expect("member is a child");
+        let mut group = Node::group(self.name.clone());
+        group.props.blend = crate::BlendMode::PassThrough;
+        doc.insert_node(self.group_id, group, parent, g_index).expect("valid group insert");
+        for m in members {
+            doc.move_node(m, self.group_id, usize::MAX).expect("move into group");
+        }
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        let parent = self.parent.expect("applied before revert");
+        // Move members out (anywhere), drop the empty group, restore order.
+        for &m in &self.ids {
+            doc.move_node(m, parent, 0).expect("move out of group");
+        }
+        doc.remove_subtree(self.group_id).expect("group present");
+        doc.set_children_order(parent, self.original_children.clone()).expect("restore order");
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Ungroup a group: move its children into the parent at the group's position,
+/// then remove the (now empty) group. Spec 0028.
+#[derive(Debug)]
+pub struct UngroupNode {
+    group_id: NodeId,
+    /// Captured on apply for revert.
+    restore: Option<(NodeId, usize, Node, Vec<NodeId>)>,
+    label: String,
+}
+
+impl UngroupNode {
+    pub fn new(group_id: NodeId) -> Self {
+        Self { group_id, restore: None, label: "Ungroup".into() }
+    }
+}
+
+impl Command for UngroupNode {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        let node = doc.node(self.group_id).expect("group present");
+        let parent = node.parent.expect("non-root group");
+        let children = node.children.clone();
+        let gi = doc.children(parent).iter().position(|&c| c == self.group_id).expect("child");
+        // Empty-group template for revert (props preserved, children cleared).
+        let mut template = node.clone();
+        template.children.clear();
+        self.restore = Some((parent, gi, template, children.clone()));
+        // Move children out, taking the group's slot in order.
+        for (k, &c) in children.iter().enumerate() {
+            doc.move_node(c, parent, gi + k).expect("move child out");
+        }
+        doc.remove_subtree(self.group_id).expect("empty group removed");
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        let (parent, gi, template, children) =
+            self.restore.take().expect("applied before revert");
+        doc.insert_node(self.group_id, template, parent, gi).expect("reinsert group");
+        for (k, &c) in children.iter().enumerate() {
+            doc.move_node(c, self.group_id, k).expect("move child back in");
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Insert a pre-built subtree (e.g. a duplicated layer — spec 0027). Built via
 /// `Document::clone_subtree`; apply restores it, revert removes it by root.
 #[derive(Debug)]
@@ -827,6 +949,57 @@ mod tests {
         // Merge coalesces same-target edits (one undo per drag).
         let next = SetVectorShapes::new(&doc, id, edited);
         assert!(cmd.try_merge(next.as_any()));
+    }
+
+    #[test]
+    fn group_and_ungroup_round_trip() {
+        let mut doc = Document::new([16, 16], ProjectFocus::Raster);
+        let root = doc.root();
+        let mut ids = Vec::new();
+        for n in ["a", "b", "c"] {
+            let mut add = AddNode::new(&mut doc, leaf(n), root, usize::MAX);
+            add.apply(&mut doc);
+            ids.push(add.id);
+        }
+        // root children = [a, b, c]
+        let before = doc.children(root).to_vec();
+
+        // Group a + c (non-contiguous).
+        let mut g = GroupNodes::new(&mut doc, &[ids[0], ids[2]], "G").expect("same parent");
+        let gid = g.group_id();
+        g.apply(&mut doc);
+        let rc = doc.children(root).to_vec();
+        assert_eq!(rc.len(), 2, "group + leftover b");
+        assert!(rc.contains(&gid) && rc.contains(&ids[1]));
+        assert_eq!(doc.children(gid), &[ids[0], ids[2]], "members in order");
+        assert_eq!(doc.node(ids[0]).unwrap().parent, Some(gid));
+
+        // Ungroup drops the group's contents at its slot: [a, c, b].
+        let mut u = UngroupNode::new(gid);
+        u.apply(&mut doc);
+        assert_eq!(doc.children(root), &[ids[0], ids[2], ids[1]], "contents take group slot");
+        assert!(doc.node(gid).is_none());
+
+        // Undo ungroup re-groups; undo group restores the original [a, b, c].
+        u.revert(&mut doc);
+        assert_eq!(doc.children(gid), &[ids[0], ids[2]], "ungroup undone");
+        g.revert(&mut doc);
+        assert_eq!(doc.children(root), before.as_slice(), "group undone");
+        assert!(doc.node(gid).is_none());
+    }
+
+    #[test]
+    fn group_rejects_cross_parent_members() {
+        let mut doc = Document::new([16, 16], ProjectFocus::Raster);
+        let root = doc.root();
+        let mut a = AddNode::new(&mut doc, leaf("a"), root, usize::MAX);
+        a.apply(&mut doc);
+        let mut gadd = AddNode::new(&mut doc, Node::group("outer"), root, usize::MAX);
+        gadd.apply(&mut doc);
+        let mut inner = AddNode::new(&mut doc, leaf("inner"), gadd.id, 0);
+        inner.apply(&mut doc);
+        // a (under root) + inner (under outer) → different parents → None.
+        assert!(GroupNodes::new(&mut doc, &[a.id, inner.id], "X").is_none());
     }
 
     #[test]

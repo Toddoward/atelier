@@ -135,6 +135,9 @@ pub struct EditorState {
     /// Pending shape insertion (kind, doc min, doc max) from a shape-tool drag
     /// — drained by the app loop into `add_shape_layer` (spec 0014/0015).
     pub pending_shape: Option<(ShapeKind, [f32; 2], [f32; 2])>,
+    /// Additional selected nodes beyond `editor.selection` (shift-click in the
+    /// Layers panel) — enables Group of multiple layers (spec 0028).
+    pub selected_extra: Vec<NodeId>,
     /// In-progress pen path anchors in doc space (spec 0016).
     pub pen_points: Vec<[f32; 2]>,
     /// Active direct-select anchor drag: (shape index, anchor index) (spec 0017).
@@ -288,6 +291,7 @@ impl AtelierApp {
                     wand_click: None,
                     vector_cache: None,
                     pending_shape: None,
+                    selected_extra: Vec::new(),
                     pen_points: Vec::new(),
                     anchor_drag: None,
                     selected_anchor: None,
@@ -448,6 +452,52 @@ impl AtelierApp {
         }
         let cmd = atelier_core::command::SetSelection::new(&st.editor.doc, arc, label);
         st.editor.apply(Box::new(cmd));
+    }
+
+    /// All currently selected nodes (primary first, then valid extras, deduped).
+    fn selected_node_set(&self) -> Vec<NodeId> {
+        let Some(st) = &self.state else { return Vec::new() };
+        let mut out = Vec::new();
+        if let Some(p) = st.editor.selection {
+            out.push(p);
+        }
+        for &e in &st.selected_extra {
+            if Some(e) != st.editor.selection && st.editor.doc.node(e).is_some() {
+                out.push(e);
+            }
+        }
+        out
+    }
+
+    /// Group the selected nodes (must share a parent) under a new group.
+    fn group_selected(&mut self) {
+        let ids = self.selected_node_set();
+        if ids.is_empty() {
+            return;
+        }
+        let Some(st) = &mut self.state else { return };
+        if let Some(cmd) = atelier_core::command::GroupNodes::new(&mut st.editor.doc, &ids, "Group")
+        {
+            let gid = cmd.group_id();
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(gid);
+            st.selected_extra.clear();
+        }
+    }
+
+    /// Ungroup the selected group (no-op if the selection isn't a group).
+    fn ungroup_selected(&mut self) {
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        if matches!(
+            st.editor.doc.node(id).map(|n| &n.kind),
+            Some(atelier_core::NodeKind::Group { .. })
+        ) {
+            let cmd = atelier_core::command::UngroupNode::new(id);
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = None;
+            st.selected_extra.clear();
+        }
     }
 
     /// Duplicate the selected layer (deep copy with fresh ids) above itself.
@@ -662,6 +712,13 @@ impl AtelierApp {
             if ctx.input_mut(|i| i.consume_shortcut(&dup)) {
                 self.duplicate_selected_layer();
             }
+            let ungroup = KeyboardShortcut::new(CMD.plus(Modifiers::SHIFT), Key::G);
+            let group = KeyboardShortcut::new(CMD, Key::G);
+            if ctx.input_mut(|i| i.consume_shortcut(&ungroup)) {
+                self.ungroup_selected();
+            } else if ctx.input_mut(|i| i.consume_shortcut(&group)) {
+                self.group_selected();
+            }
         }
 
         // Deselect (Ctrl+D).
@@ -785,6 +842,25 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.duplicate_selected_layer();
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new("Group\t(Ctrl+G)"))
+                        .clicked()
+                    {
+                        self.group_selected();
+                        ui.close_menu();
+                    }
+                    let is_group = self.state.as_ref().is_some_and(|s| {
+                        s.editor.selection.and_then(|id| s.editor.doc.node(id)).is_some_and(|n| {
+                            matches!(n.kind, atelier_core::NodeKind::Group { .. })
+                        })
+                    });
+                    if ui
+                        .add_enabled(is_group, egui::Button::new("Ungroup\t(Ctrl+Shift+G)"))
+                        .clicked()
+                    {
+                        self.ungroup_selected();
                         ui.close_menu();
                     }
                     if ui.add_enabled(has, egui::Button::new("Transform…")).clicked() {
@@ -963,6 +1039,7 @@ impl AtelierApp {
                     wand_click: None,
                     vector_cache: None,
                     pending_shape: None,
+                    selected_extra: Vec::new(),
                     pen_points: Vec::new(),
                     anchor_drag: None,
                     selected_anchor: None,
@@ -1191,6 +1268,7 @@ impl AtelierApp {
             if st.rename.as_ref().is_some_and(|(id, _)| st.editor.doc.node(*id).is_none()) {
                 st.rename = None;
             }
+            st.selected_extra.retain(|&id| st.editor.doc.node(id).is_some());
         }
 
         self.handle_shortcuts(ctx);
@@ -1819,6 +1897,55 @@ mod ui_tests {
         }
         h.run();
         h.run();
+    }
+
+    /// Spec 0028: group two layers, then ungroup; undoable.
+    #[test]
+    fn group_and_ungroup_layers_via_app() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let a = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        click_label(&mut h, "+ Layer");
+        let b = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+
+        // Select both (primary = b, extra = a), then group.
+        h.state_mut().state.as_mut().unwrap().selected_extra = vec![a];
+        h.state_mut().group_selected();
+        h.run();
+        let gid = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            assert_eq!(st.editor.doc.node_count(), n0 + 1, "group node added");
+            assert!(
+                matches!(st.editor.doc.node(gid).unwrap().kind, NodeKind::Group { .. }),
+                "selection is the new group"
+            );
+            assert_eq!(st.editor.doc.children(gid).len(), 2, "both layers moved in");
+            assert!(st.selected_extra.is_empty(), "extra cleared after group");
+        }
+
+        // Ungroup it.
+        h.state_mut().ungroup_selected();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            assert!(st.editor.doc.node(gid).is_none(), "group removed");
+            assert!(st.editor.doc.node(a).is_some() && st.editor.doc.node(b).is_some());
+        }
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND); // undo ungroup
+        assert!(
+            h.state().state.as_ref().unwrap().editor.doc.node(gid).is_some(),
+            "undo restored the group"
+        );
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND); // undo group
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0,
+            "undo group removed it"
+        );
     }
 
     /// Spec 0027: duplicate the selected layer; undo removes the copy.

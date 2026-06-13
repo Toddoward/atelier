@@ -3,7 +3,29 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-u (spec 0027 — duplicate layer DONE)
+## Last session: 2026-06-13-v (spec 0028 — multi-select + group/ungroup DONE)
+
+### Done
+- **Spec 0028 ☑** — additive node multi-select (`EditorState.selected_extra` beside primary
+  `editor.selection`; shift/ctrl-click in Layers panel; stale-pruned each frame). Core
+  `GroupNodes` / `UngroupNode` commands + `Document::set_children_order`. App `group_selected`
+  / `ungroup_selected`, Ctrl+G / Ctrl+Shift+G, Layer-menu entries. core 39 / app 32 tests
+  green, clippy clean, smoke clean.
+
+### Next
+1. **Cross-layer align/distribute** — reuse `selected_node_set()` to align/distribute whole
+   layers (raster offset / vector translate) to each other; the multi-object half of VEC-6.
+2. **Boolean path ops** (VEC-5) — NEW `i_overlay` dep, read API first. The persistent
+   deferred new-dep task.
+3. **Copy/paste layers** (reuse `InsertSubtree` + a clipboard); Phase 5 — place image (INT-3),
+   smart objects, z-interleaved compositing.
+
+### Watch out (additions)
+- Multi-select is additive: `selected_node_set()` = primary + valid extras (deduped). Group
+  requires all members share a parent (`GroupNodes::new` returns None otherwise).
+- Ungroup drops contents at the group's slot; pre-group order returns only via undo-group.
+
+## Previous session: 2026-06-13-u (spec 0027 — duplicate layer DONE)
 
 ### Done
 - **Spec 0027 ☑** — `Document::clone_subtree` (deep copy w/ fresh ids) + `InsertSubtree`

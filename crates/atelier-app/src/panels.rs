@@ -244,7 +244,7 @@ fn layer_row(ui: &mut egui::Ui, state: &mut EditorState, id: NodeId, depth: usiz
     let mut visible = node.props.visible;
     let name = node.props.name.clone();
     let kind = node.kind.kind_name();
-    let selected = state.editor.selection == Some(id);
+    let selected = state.editor.selection == Some(id) || state.selected_extra.contains(&id);
 
     ui.horizontal(|ui| {
         ui.add_space(depth as f32 * 14.0);
@@ -280,7 +280,19 @@ fn layer_row(ui: &mut egui::Ui, state: &mut EditorState, id: NodeId, depth: usiz
             let label = if is_group { format!("[G] {name}") } else { name.clone() };
             let resp = ui.selectable_label(selected, label).on_hover_text(kind);
             if resp.clicked() {
-                state.editor.selection = Some(id);
+                // Shift/Ctrl-click extends the selection (spec 0028 multi-select).
+                let additive = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+                if additive && state.editor.selection.is_some() && state.editor.selection != Some(id)
+                {
+                    if let Some(pos) = state.selected_extra.iter().position(|&e| e == id) {
+                        state.selected_extra.remove(pos); // toggle off
+                    } else {
+                        state.selected_extra.push(id);
+                    }
+                } else {
+                    state.editor.selection = Some(id);
+                    state.selected_extra.clear();
+                }
             }
             if resp.double_clicked() {
                 state.rename = Some((id, name));

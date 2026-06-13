@@ -181,6 +181,21 @@ impl Document {
         Ok(())
     }
 
+    /// Reorder a parent's children to `order` (must be a permutation of the
+    /// current children). Child `parent` links are unchanged. Spec 0028.
+    pub fn set_children_order(&mut self, parent: NodeId, order: Vec<NodeId>) -> Result<(), TreeError> {
+        let p = self.nodes.get_mut(&parent).ok_or(TreeError::NotFound(parent))?;
+        let mut cur = p.children.clone();
+        cur.sort();
+        let mut want = order.clone();
+        want.sort();
+        if cur != want {
+            return Err(TreeError::NotFound(parent)); // not a permutation
+        }
+        self.nodes.get_mut(&parent).expect("checked").children = order;
+        Ok(())
+    }
+
     /// Deep-clone the subtree rooted at `id` with fresh NodeIds, re-parented
     /// under `new_parent`. Returns `(new_root, nodes)` ready for
     /// [`restore_subtree`] (root first, links remapped). Spec 0027.
