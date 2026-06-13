@@ -373,6 +373,50 @@ pub fn properties_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         ui.separator();
         adjustment_editor(ui, state, id, adj);
     }
+
+    // Vector layers: edit the fill color of all shapes (spec 0017 follow-up).
+    // Recompute in a scoped borrow so the node borrow doesn't span the edit.
+    let vec_fill = match &state.editor.doc.node(id).expect("selected").kind {
+        NodeKind::Vector(c) => Some(c.shapes.iter().find_map(|s| s.fill).unwrap_or([0.0; 4])),
+        _ => None,
+    };
+    if let Some(current) = vec_fill {
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("Fill");
+            let mut rgba = egui::Rgba::from_rgba_unmultiplied(
+                current[0], current[1], current[2], current[3],
+            );
+            if egui::color_picker::color_edit_button_rgba(
+                ui,
+                &mut rgba,
+                egui::color_picker::Alpha::OnlyBlend,
+            )
+            .changed()
+            {
+                let [r, g, b, a] = rgba.to_rgba_unmultiplied();
+                state.editor.history.set_merging(true);
+                apply_vector_fill(state, id, [r, g, b, a]);
+                state.editor.history.set_merging(false);
+            }
+        });
+    }
+}
+
+/// Set the fill color of every shape in a vector layer (undoable, merged).
+pub fn apply_vector_fill(state: &mut EditorState, id: NodeId, color: [f32; 4]) {
+    let shapes = match state.editor.doc.node(id).map(|n| &n.kind) {
+        Some(NodeKind::Vector(c)) => {
+            let mut s = c.shapes.clone();
+            for sh in &mut s {
+                sh.fill = Some(color);
+            }
+            s
+        }
+        _ => return,
+    };
+    let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, shapes);
+    state.editor.apply(Box::new(cmd));
 }
 
 fn adjustment_editor(

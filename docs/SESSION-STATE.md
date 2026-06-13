@@ -13,6 +13,10 @@
   app 25 / vector tests green, clippy clean, smoke clean.
 - ROADMAP Phase 4 = ◐ (slices a,b,c1,c1b,c2a,c2b done).
 
+### Also done (0017 follow-up)
+- Vector fill-color editor in the Properties panel (`panels::apply_vector_fill`, merged
+  `SetVectorShapes`, undoable) — recolor a selected vector layer's shapes. app 26 tests.
+
 ### Next — Phase 4 continues
 1. **Spec 0018 (slice c2c)** — bezier control-handle drag (convert line↔curve), add/remove
    anchor on an existing path, marquee anchor multi-select. Builds on `SetVectorShapes` +

@@ -1746,6 +1746,52 @@ mod ui_tests {
         h.run();
     }
 
+    /// Vector layer fill editing (Properties): undoable, restores on undo.
+    #[test]
+    fn vector_fill_edit_applies_and_undoes() {
+        use atelier_core::atelier_vector::{Path, Shape};
+        let mut h = harness();
+        create_doc(&mut h);
+        let id = {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let content = atelier_core::VectorContent {
+                shapes: vec![Shape::filled(Path::rect(0.0, 0.0, 10.0, 10.0), [1.0, 0.0, 0.0, 1.0])],
+            };
+            let cmd = atelier_core::command::AddNode::new(
+                &mut st.editor.doc,
+                atelier_core::Node::new(
+                    atelier_core::LayerProps::named("v"),
+                    atelier_core::NodeKind::Vector(content),
+                ),
+                root,
+                0,
+            );
+            let id = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(id);
+            id
+        };
+        h.run();
+
+        panels::apply_vector_fill(
+            h.state_mut().state.as_mut().unwrap(),
+            id,
+            [0.0, 1.0, 0.0, 1.0],
+        );
+        h.run();
+        let fill = |h: &Harness<'static, AtelierApp>| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Vector(c) => c.shapes[0].fill.unwrap(),
+                _ => panic!(),
+            }
+        };
+        assert_eq!(fill(&h), [0.0, 1.0, 0.0, 1.0], "fill recolored");
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(fill(&h), [1.0, 0.0, 0.0, 1.0], "undo restored fill");
+    }
+
     /// Spec 0016: pen clicks build a path; Enter finishes one vector layer; undo removes it.
     #[test]
     fn pen_tool_builds_path_layer_and_undoes() {
