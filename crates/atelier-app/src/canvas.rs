@@ -316,32 +316,54 @@ fn handle_tools(
                     }
                 }
             }
+            // Plain click selects an anchor (shows its bezier handles, spec 0021).
+            if response.clicked() && !ui.input(|i| i.modifiers.alt) {
+                if let Some(p) = response.interact_pointer_pos() {
+                    state.selected_anchor = nearest_anchor(&shapes, vp, pointer_doc(p));
+                }
+            }
             if response.drag_started_by(egui::PointerButton::Primary) {
                 let press = ui
                     .input(|i| i.pointer.press_origin())
                     .or_else(|| response.interact_pointer_pos());
                 if let Some(p) = press {
-                    if let Some(idx) = nearest_anchor(&shapes, vp, pointer_doc(p)) {
+                    let q = pointer_doc(p);
+                    // Prefer grabbing a handle of the selected anchor; else an anchor.
+                    if let Some(grab) = nearest_handle(&shapes, vp, q, state.selected_anchor) {
+                        state.handle_drag = Some(grab);
+                        state.editor.history.set_merging(true);
+                    } else if let Some(idx) = nearest_anchor(&shapes, vp, q) {
                         state.anchor_drag = Some(idx);
+                        state.selected_anchor = Some(idx);
                         state.editor.history.set_merging(true);
                     }
                 }
             }
             if response.dragged_by(egui::PointerButton::Primary) {
-                if let (Some((si, ai)), Some(pos)) =
-                    (state.anchor_drag, response.interact_pointer_pos())
-                {
+                if let Some(pos) = response.interact_pointer_pos() {
                     let to = pointer_doc(pos);
-                    let mut new_shapes = shapes.clone();
-                    new_shapes[si].path.move_anchor(ai, to);
-                    let cmd = SetVectorShapes::new(&state.editor.doc, id, new_shapes);
-                    state.editor.apply(Box::new(cmd));
+                    if let Some((si, ai, is_out)) = state.handle_drag {
+                        let mut new_shapes = shapes.clone();
+                        if is_out {
+                            new_shapes[si].path.set_out_handle(ai, to);
+                        } else {
+                            new_shapes[si].path.set_in_handle(ai, to);
+                        }
+                        let cmd = SetVectorShapes::new(&state.editor.doc, id, new_shapes);
+                        state.editor.apply(Box::new(cmd));
+                    } else if let Some((si, ai)) = state.anchor_drag {
+                        let mut new_shapes = shapes.clone();
+                        new_shapes[si].path.move_anchor(ai, to);
+                        let cmd = SetVectorShapes::new(&state.editor.doc, id, new_shapes);
+                        state.editor.apply(Box::new(cmd));
+                    }
                 }
             }
-            if response.drag_stopped_by(egui::PointerButton::Primary)
-                && state.anchor_drag.take().is_some()
-            {
-                state.editor.history.set_merging(false);
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                let was = state.anchor_drag.take().is_some() || state.handle_drag.take().is_some();
+                if was {
+                    state.editor.history.set_merging(false);
+                }
             }
         }
         ActiveTool::Pen => {
@@ -392,6 +414,30 @@ fn nearest_anchor(
         }
     }
     best.map(|(idx, _)| idx)
+}
+
+/// Nearest grabbable bezier handle (only the selected anchor's in/out handles)
+/// within ~10 screen px of `target_doc`. Returns (shape, anchor, is_out). Spec 0021.
+fn nearest_handle(
+    shapes: &[atelier_core::atelier_vector::Shape],
+    vp: &Viewport,
+    target_doc: [f32; 2],
+    selected: Option<(usize, usize)>,
+) -> Option<(usize, usize, bool)> {
+    let (si, ai) = selected?;
+    let sh = shapes.get(si)?;
+    let t = vp.doc_to_screen(target_doc);
+    let mut best: Option<((usize, usize, bool), f32)> = None;
+    for (handle, is_out) in [(sh.path.out_handle(ai), true), (sh.path.in_handle(ai), false)] {
+        if let Some(hp) = handle {
+            let s = vp.doc_to_screen(hp);
+            let d = ((s[0] - t[0]).powi(2) + (s[1] - t[1]).powi(2)).sqrt();
+            if d < 10.0 && best.is_none_or(|(_, bd)| d < bd) {
+                best = Some(((si, ai, is_out), d));
+            }
+        }
+    }
+    best.map(|(g, _)| g)
 }
 
 /// Build a filled vector layer from the in-progress pen anchors (spec 0016).
@@ -614,20 +660,37 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
         }
     }
 
-    // Direct-select: show draggable anchor dots on the selected vector layer.
+    // Direct-select: anchor dots + bezier handles for the selected anchor.
     if state.tool == ActiveTool::DirectSelect {
         if let Some(node) = state.editor.selection.and_then(|id| state.editor.doc.node(id)) {
             if let NodeKind::Vector(c) = &node.kind {
+                let to_screen = |p: [f32; 2]| {
+                    let s = vp.doc_to_screen(p);
+                    rect.min + egui::vec2(s[0], s[1])
+                };
+                let accent = egui::Color32::from_rgb(90, 170, 255);
                 for sh in &c.shapes {
                     for a in sh.path.anchors() {
-                        let s = vp.doc_to_screen(a);
-                        let p = rect.min + egui::vec2(s[0], s[1]);
+                        let p = to_screen(a);
                         painter.circle_filled(p, 3.5, egui::Color32::WHITE);
-                        painter.circle_stroke(
-                            p,
-                            3.5,
-                            egui::Stroke::new(1.0, egui::Color32::from_rgb(90, 170, 255)),
-                        );
+                        painter.circle_stroke(p, 3.5, egui::Stroke::new(1.0, accent));
+                    }
+                }
+                // Handles for the selected anchor (drag targets).
+                if let Some((si, ai)) = state.selected_anchor {
+                    if let Some(sh) = c.shapes.get(si) {
+                        let ap = sh.path.anchors().get(ai).copied();
+                        if let Some(ap) = ap {
+                            let aps = to_screen(ap);
+                            for hp in [sh.path.out_handle(ai), sh.path.in_handle(ai)]
+                                .into_iter()
+                                .flatten()
+                            {
+                                let hs = to_screen(hp);
+                                painter.line_segment([aps, hs], egui::Stroke::new(1.0, accent));
+                                painter.circle_filled(hs, 3.0, accent);
+                            }
+                        }
                     }
                 }
             }

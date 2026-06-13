@@ -139,6 +139,10 @@ pub struct EditorState {
     pub pen_points: Vec<[f32; 2]>,
     /// Active direct-select anchor drag: (shape index, anchor index) (spec 0017).
     pub anchor_drag: Option<(usize, usize)>,
+    /// Anchor whose bezier handles are shown for editing (spec 0021).
+    pub selected_anchor: Option<(usize, usize)>,
+    /// Active handle drag: (shape index, anchor index, is_outgoing) (spec 0021).
+    pub handle_drag: Option<(usize, usize, bool)>,
 }
 
 /// Doc-space unit segments outlining the selection boundary.
@@ -286,6 +290,8 @@ impl AtelierApp {
                     pending_shape: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
+                    selected_anchor: None,
+                    handle_drag: None,
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -892,6 +898,8 @@ impl AtelierApp {
                     pending_shape: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
+                    selected_anchor: None,
+                    handle_drag: None,
             });
             self.viewport = Viewport::default();
         } else if cancel {

@@ -257,6 +257,45 @@ impl Path {
         self.anchors().get(index).copied()
     }
 
+    /// Outgoing bezier control handle of the anchor at `index`, if its outgoing
+    /// segment is a cubic. Spec 0021.
+    pub fn out_handle(&self, index: usize) -> Option<Point> {
+        let mut i = 0;
+        for sp in &self.subpaths {
+            let n = 1 + sp.segs.len();
+            if index < i + n {
+                let local = index - i;
+                return match sp.segs.get(local) {
+                    Some(Seg::Cubic(c1, _, _)) => Some(*c1),
+                    _ => None,
+                };
+            }
+            i += n;
+        }
+        None
+    }
+
+    /// Incoming bezier control handle of the anchor at `index`, if its incoming
+    /// segment is a cubic. Spec 0021.
+    pub fn in_handle(&self, index: usize) -> Option<Point> {
+        let mut i = 0;
+        for sp in &self.subpaths {
+            let n = 1 + sp.segs.len();
+            if index < i + n {
+                let local = index - i;
+                if local == 0 {
+                    return None;
+                }
+                return match sp.segs.get(local - 1) {
+                    Some(Seg::Cubic(_, c2, _)) => Some(*c2),
+                    _ => None,
+                };
+            }
+            i += n;
+        }
+        None
+    }
+
     /// Set the outgoing bezier control handle of the anchor at `index`,
     /// converting its outgoing segment to a cubic if it was a line. No-op if the
     /// anchor has no outgoing segment (subpath end). Spec 0020.
@@ -492,6 +531,20 @@ mod tests {
         // No outgoing segment at the last anchor; no incoming at the start.
         assert!(!p.set_out_handle(3, [0.0, 0.0]));
         assert!(!p.set_in_handle(0, [0.0, 0.0]));
+    }
+
+    #[test]
+    fn handle_get_set_round_trips() {
+        let mut p = Path::rect(0.0, 0.0, 10.0, 10.0);
+        // Lines have no handles yet.
+        assert_eq!(p.out_handle(0), None);
+        assert_eq!(p.in_handle(2), None);
+        p.set_out_handle(0, [2.0, -2.0]);
+        p.set_in_handle(2, [12.0, 4.0]);
+        assert_eq!(p.out_handle(0), Some([2.0, -2.0]));
+        assert_eq!(p.in_handle(2), Some([12.0, 4.0]));
+        // Start has no incoming handle.
+        assert_eq!(p.in_handle(0), None);
     }
 
     #[test]

@@ -3,7 +3,34 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-n (spec 0020 — bezier handle model DONE)
+## Last session: 2026-06-13-o (spec 0021 — bezier handle UI DONE; path editing complete)
+
+### Done
+- **Spec 0021 ☑** — `Path::out_handle`/`in_handle` getters; Direct Select click selects an
+  anchor and renders its bezier handles, dragging a handle reshapes the curve via
+  `set_out_handle`/`set_in_handle` + merged `SetVectorShapes` (undoable). Added
+  `selected_anchor` + `handle_drag` state and `nearest_handle` hit-test. **Interactive path
+  editing (shapes, anchors add/move/remove, bezier handles) is now complete.** app 26 /
+  core 36 / vector 16 tests green, clippy clean, smoke clean.
+- ROADMAP Phase 4 = ◐ (all path-editing slices done; booleans/align/compound remain).
+
+### Next — Phase 4 finish
+1. **Spec 0022 — boolean path ops** (VEC-5): unite/subtract/intersect/exclude via the
+   `i_overlay` crate (NEW workspace dep — add to root Cargo.toml + atelier-vector). Provide
+   `atelier_vector` boolean fns over `Path`, a `BooleanOp` command combining ≥2 selected
+   vector layers (or shapes), and a Pathfinder-style UI (panel buttons). i_overlay API is
+   unfamiliar — read its docs first; convert `Path`→i_overlay polygons (flatten cubics),
+   op, convert back to `Path` (lines). Document precision/flattening trade-off.
+2. Align/distribute; compound paths (multi-subpath fill already supported by the model).
+3. Phase 5 — focus modes & raster↔vector interop (z-interleaving; vectors currently overlay).
+
+### Watch out (additions)
+- Handles move independently (no symmetric mode yet); closing-edge handles unsupported until
+  close is a real segment.
+- `selected_anchor`/`handle_drag` indices can go stale if shapes change out from under them;
+  renders/drags guard with `.get()`, but a future shape-structure edit should clear them.
+
+## Previous session: 2026-06-13-n (spec 0020 — bezier handle model DONE)
 
 ### Done
 - **Spec 0020 ☑** — `Path::set_out_handle` / `set_in_handle`: set an anchor's outgoing/incoming
