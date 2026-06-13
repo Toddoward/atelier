@@ -16,6 +16,8 @@
   GPU_LOCK; CI unaffected (skips on software adapter). Not a compositor defect.
 - ROADMAP Phase 3 still ◐ — only magic wand + feather/grow/invert-selection remain before
   the Phase 3 gate.
+- Post-commit CI fix `fc4d971`: `transform_layer` was pivoting about tile-granular
+  `bounds()` (wrong center); added `TileMap::pixel_bounds()`, pivot about it. CI-caught.
 
 ### Next
 1. **Spec 0011 — Phase 3 final slice**: magic wand (flood-fill select by color tolerance),
