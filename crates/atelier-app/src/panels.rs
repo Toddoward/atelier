@@ -23,6 +23,8 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         (ActiveTool::SelectEllipse, "Select Ellipse"),
         (ActiveTool::Lasso, "Lasso (L)"),
         (ActiveTool::MagicWand, "Magic Wand (W)"),
+        (ActiveTool::ShapeRect, "Rectangle (U)"),
+        (ActiveTool::ShapeEllipse, "Ellipse"),
     ] {
         if ui.selectable_label(state.tool == tool, label).clicked() {
             state.tool = tool;
@@ -32,6 +34,26 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         ui.separator();
         ui.label("Tolerance");
         ui.add(egui::Slider::new(&mut state.brush.wand_tolerance, 0..=128));
+    }
+    if matches!(state.tool, ActiveTool::ShapeRect | ActiveTool::ShapeEllipse) {
+        ui.separator();
+        ui.label("Fill");
+        let mut rgba = egui::Rgba::from_rgba_unmultiplied(
+            state.brush.vector_fill[0],
+            state.brush.vector_fill[1],
+            state.brush.vector_fill[2],
+            state.brush.vector_fill[3],
+        );
+        if egui::color_picker::color_edit_button_rgba(
+            ui,
+            &mut rgba,
+            egui::color_picker::Alpha::OnlyBlend,
+        )
+        .changed()
+        {
+            let [r, g, b, a] = rgba.to_rgba_unmultiplied();
+            state.brush.vector_fill = [r, g, b, a];
+        }
     }
     if matches!(state.tool, ActiveTool::Brush | ActiveTool::Eraser) {
         ui.separator();

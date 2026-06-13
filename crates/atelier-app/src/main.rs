@@ -45,6 +45,8 @@ pub enum ActiveTool {
     SelectEllipse,
     Lasso,
     MagicWand,
+    ShapeRect,
+    ShapeEllipse,
 }
 
 /// Brush/eraser options (Tools panel).
@@ -54,11 +56,19 @@ pub struct BrushSettings {
     pub color: [f32; 4],
     /// Magic-wand color tolerance (0..=255).
     pub wand_tolerance: u8,
+    /// Fill color for newly drawn vector shapes.
+    pub vector_fill: [f32; 4],
 }
 
 impl Default for BrushSettings {
     fn default() -> Self {
-        Self { radius: 16.0, hardness: 0.8, color: [0.1, 0.1, 0.1, 1.0], wand_tolerance: 32 }
+        Self {
+            radius: 16.0,
+            hardness: 0.8,
+            color: [0.1, 0.1, 0.1, 1.0],
+            wand_tolerance: 32,
+            vector_fill: [0.2, 0.5, 0.9, 1.0],
+        }
     }
 }
 
@@ -96,6 +106,9 @@ pub struct EditorState {
     /// Tessellated vector-layer meshes (doc space), cached by history revision
     /// (spec 0013). Re-tessellate only on document change.
     pub vector_cache: Option<(u64, Vec<(NodeId, atelier_core::atelier_vector::Mesh)>)>,
+    /// Pending shape insertion (is_ellipse, doc min, doc max) from a shape-tool
+    /// drag — drained by the app loop into `add_shape_layer` (spec 0014).
+    pub pending_shape: Option<(bool, [f32; 2], [f32; 2])>,
 }
 
 /// Doc-space unit segments outlining the selection boundary.
@@ -240,6 +253,7 @@ impl AtelierApp {
                     ants: None,
                     wand_click: None,
                     vector_cache: None,
+                    pending_shape: None,
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -419,6 +433,45 @@ impl AtelierApp {
         st.editor.selection = Some(id);
     }
 
+    /// Insert a filled vector shape layer from a doc-space bounding box
+    /// (spec 0014). `ellipse` chooses ellipse vs rectangle.
+    fn add_shape_layer(&mut self, ellipse: bool, min: [f32; 2], max: [f32; 2]) {
+        use atelier_core::atelier_vector::{Path, Shape};
+        use atelier_core::{LayerProps, Node, NodeKind, VectorContent};
+        let Some(st) = &mut self.state else { return };
+        let (w, h) = (max[0] - min[0], max[1] - min[1]);
+        if w < 1.0 || h < 1.0 {
+            return;
+        }
+        let path = if ellipse {
+            Path::ellipse(min[0] + w * 0.5, min[1] + h * 0.5, w * 0.5, h * 0.5)
+        } else {
+            Path::rect(min[0], min[1], w, h)
+        };
+        let content =
+            VectorContent { shapes: vec![Shape::filled(path, st.brush.vector_fill)] };
+        let name = if ellipse { "Ellipse" } else { "Rectangle" };
+
+        let doc = &st.editor.doc;
+        let (parent, index) = match st.editor.selection.and_then(|s| doc.node(s).map(|n| (s, n))) {
+            Some((sel, n)) => {
+                let parent = n.parent.unwrap_or(doc.root());
+                let index = doc.children(parent).iter().position(|&c| c == sel).unwrap_or(0);
+                (parent, index)
+            }
+            None => (doc.root(), 0),
+        };
+        let cmd = atelier_core::command::AddNode::new(
+            &mut st.editor.doc,
+            Node::new(LayerProps::named(name), NodeKind::Vector(content)),
+            parent,
+            index,
+        );
+        let id = cmd.id;
+        st.editor.apply(Box::new(cmd));
+        st.editor.selection = Some(id);
+    }
+
     /// Apply a destructive adjustment to the selected raster layer, within the
     /// active selection (whole layer if none). One undoable PaintTiles entry.
     fn apply_adjustment(&mut self, adj: atelier_raster::Adjustment) {
@@ -561,6 +614,9 @@ impl AtelierApp {
                     }
                     if i.key_pressed(Key::L) {
                         st.tool = ActiveTool::Lasso;
+                    }
+                    if i.key_pressed(Key::U) {
+                        st.tool = ActiveTool::ShapeRect;
                     }
                     if i.key_pressed(Key::W) {
                         st.tool = ActiveTool::MagicWand;
@@ -793,6 +849,7 @@ impl AtelierApp {
                     ants: None,
                     wand_click: None,
                     vector_cache: None,
+                    pending_shape: None,
             });
             self.viewport = Viewport::default();
         } else if cancel {
@@ -1044,6 +1101,11 @@ impl AtelierApp {
         // Drain a queued magic-wand click (canvas can't call the app helper).
         if let Some((doc, shift, alt)) = self.state.as_mut().and_then(|s| s.wand_click.take()) {
             self.magic_wand_at(doc, shift, alt);
+        }
+        // Drain a queued shape-tool drag into a new vector layer (spec 0014).
+        if let Some((ellipse, min, max)) = self.state.as_mut().and_then(|s| s.pending_shape.take())
+        {
+            self.add_shape_layer(ellipse, min, max);
         }
 
         self.sync_title(ctx);
@@ -1626,6 +1688,42 @@ mod ui_tests {
         assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_none());
         send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
         assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_some());
+    }
+
+    /// Spec 0014: a shape-tool drag inserts one vector layer; undo removes it.
+    #[test]
+    fn shape_tool_drag_inserts_vector_layer_and_undoes() {
+        for (ellipse, tool) in
+            [(false, ActiveTool::ShapeRect), (true, ActiveTool::ShapeEllipse)]
+        {
+            let mut h = harness();
+            create_doc(&mut h);
+            h.state_mut().state.as_mut().unwrap().tool = tool;
+            h.run();
+            let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+
+            pointer_drag(&mut h, CANVAS_A, CANVAS_B);
+            h.run();
+
+            let st = h.state().state.as_ref().unwrap();
+            assert_eq!(
+                st.editor.doc.node_count(),
+                n0 + 1,
+                "shape drag added one layer (ellipse={ellipse})"
+            );
+            let id = st.editor.selection.expect("new shape selected");
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Vector(c) => assert_eq!(c.shapes.len(), 1, "one shape"),
+                k => panic!("expected vector layer, got {}", k.kind_name()),
+            }
+
+            send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+            assert_eq!(
+                h.state().state.as_ref().unwrap().editor.doc.node_count(),
+                n0,
+                "undo removed the shape layer"
+            );
+        }
     }
 
     /// Spec 0008: Invert via menu mutates the selected layer's pixels + undoable.

@@ -236,6 +236,38 @@ fn handle_tools(
                 }
             }
         }
+        ActiveTool::ShapeRect | ActiveTool::ShapeEllipse => {
+            // Rubber-band a shape (reuses select_drag for the live preview).
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                let origin = ui
+                    .input(|i| i.pointer.press_origin())
+                    .or_else(|| response.interact_pointer_pos());
+                if let Some(pos) = origin {
+                    let doc = pointer_doc(pos);
+                    state.select_drag =
+                        Some(SelectDrag { start: doc, current: doc, points: vec![doc] });
+                }
+            }
+            if response.dragged_by(egui::PointerButton::Primary) {
+                if let (Some(drag), Some(pos)) =
+                    (&mut state.select_drag, response.interact_pointer_pos())
+                {
+                    drag.current = pointer_doc(pos);
+                }
+            }
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                if let Some(drag) = state.select_drag.take() {
+                    let min =
+                        [drag.start[0].min(drag.current[0]), drag.start[1].min(drag.current[1])];
+                    let max =
+                        [drag.start[0].max(drag.current[0]), drag.start[1].max(drag.current[1])];
+                    if max[0] - min[0] >= 1.0 && max[1] - min[1] >= 1.0 {
+                        let ellipse = state.tool == ActiveTool::ShapeEllipse;
+                        state.pending_shape = Some((ellipse, min, max));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -408,17 +440,13 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
         };
         let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(230));
         match state.tool {
-            ActiveTool::SelectRect | ActiveTool::SelectEllipse => {
+            ActiveTool::SelectRect | ActiveTool::ShapeRect => {
                 let r = egui::Rect::from_two_pos(to_screen(drag.start), to_screen(drag.current));
-                if state.tool == ActiveTool::SelectRect {
-                    painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Middle);
-                } else {
-                    painter.add(egui::Shape::ellipse_stroke(
-                        r.center(),
-                        r.size() * 0.5,
-                        stroke,
-                    ));
-                }
+                painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Middle);
+            }
+            ActiveTool::SelectEllipse | ActiveTool::ShapeEllipse => {
+                let r = egui::Rect::from_two_pos(to_screen(drag.start), to_screen(drag.current));
+                painter.add(egui::Shape::ellipse_stroke(r.center(), r.size() * 0.5, stroke));
             }
             ActiveTool::Lasso => {
                 let pts: Vec<egui::Pos2> = drag.points.iter().map(|&p| to_screen(p)).collect();

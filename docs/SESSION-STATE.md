@@ -3,7 +3,32 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-g (spec 0013 — Phase 4 slice b DONE)
+## Last session: 2026-06-13-h (spec 0014 — Phase 4 slice c1 DONE)
+
+### Done
+- **Spec 0014 ☑** — shape tools: Rectangle (U) + Ellipse tools rubber-band a shape on the
+  canvas and insert a filled `NodeKind::Vector` layer (fill = `BrushSettings.vector_fill`,
+  picker in Tools panel), undoable via plain `AddNode`, rendered live by the 0013 path.
+  First real vector authoring (layers were test/fixture-only before). Reused marquee drag
+  plumbing; insertion queued on `pending_shape`, drained in the app loop. app 23 / core 35
+  tests green, clippy clean, smoke clean.
+- ROADMAP Phase 4 = ◐ (slices a+b+c1 done).
+
+### Next — Phase 4 continues
+1. **Spec 0015 (slice c2)** — pen tool (click to add anchors, drag for bezier handles),
+   direct-select (move anchors/handles), and the remaining shape primitives
+   (polygon/star/line). Needs an edit-path command + anchor hit-testing on the canvas.
+   Editing existing shape geometry doesn't exist yet — only whole-shape insert.
+2. Booleans (i_overlay: unite/subtract/intersect/exclude), align/distribute, compound paths.
+3. Phase 5 — focus modes & raster↔vector interop (z-interleaving; today vectors overlay).
+
+### Watch out (additions)
+- Shape insertion uses the `pending_shape` queue drained in `ui()` after `DockArea::show`
+  (canvas can't call `&mut self` app helpers) — same pattern as `wand_click`.
+- Vector layers still render as an egui-mesh OVERLAY above the raster composite (R-13 /
+  Phase 5), not z-interleaved.
+
+## Previous session: 2026-06-13-g (spec 0013 — Phase 4 slice b DONE)
 
 ### Done
 - **Spec 0013 ☑** — vector layers now render on the canvas: each visible vector layer's
