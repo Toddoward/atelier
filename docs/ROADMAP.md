@@ -7,7 +7,7 @@ spec's Verification Log). Do not start phase N+1 with phase N red.
 Status legend: ☐ not started · ◐ in progress · ☑ done
 
 Specs written so far: Phase 0 → 0001 ☑ · Phase 1 → 0002 ☑ · Phase 2 → 0003 ☑ + 0004 ☑ + 0005 ☑ + 0006 ☑ (gate met). Phase 3 → 0007 ☑ + 0008 ☑ + 0009 ☑ + 0010 ☑ + 0011 ☑ — **Phase 3 complete**. Deferred: quick-mask, interactive transform handles, magnetic lasso, refine-edge.
-Phase 4 → 0012 ☑ (path model + tessellation) + 0013 ☑ (canvas render) + 0014 ☑ (rect/ellipse tools) + 0015 ☑ (polygon/star tools) + 0016 ☑ (pen tool) + 0017 ☑ (direct-select anchor move) + 0018 ☑ (add/remove anchors) + 0019 ☑ (segment-click insert) + 0020 ☑ (bezier handle model) + 0021 ☑ (handle-drag UI — interactive path editing complete) + 0022 ☑ (align vector layer to canvas, no-dep VEC-6 subset). Next: 0023 boolean path ops (i_overlay dep — read its API first); then multi-select + multi-object align/distribute, compound paths.
+Phase 4 → 0012 ☑ (path model + tessellation) + 0013 ☑ (canvas render) + 0014 ☑ (rect/ellipse tools) + 0015 ☑ (polygon/star tools) + 0016 ☑ (pen tool) + 0017 ☑ (direct-select anchor move) + 0018 ☑ (add/remove anchors) + 0019 ☑ (segment-click insert) + 0020 ☑ (bezier handle model) + 0021 ☑ (handle-drag UI — interactive path editing complete) + 0022 ☑ (align vector layer to canvas, no-dep VEC-6 subset). + 0023 ☑ (rasterize vector layer, INT-2 — landed early). Next: 0024 boolean path ops (i_overlay dep — read its API first); then multi-select + multi-object align/distribute, compound paths, rasterize AA.
 
 | # | Phase | Contents (req IDs) | Verify gate | Status |
 |---|-------|--------------------|-------------|--------|

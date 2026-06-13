@@ -572,6 +572,42 @@ impl Command for SetVectorShapes {
     }
 }
 
+/// Swap a node's `kind` wholesale (e.g. rasterize a vector layer — INT-2,
+/// spec 0023). Props/children/parent are untouched.
+#[derive(Debug)]
+pub struct ReplaceNodeKind {
+    pub id: NodeId,
+    pub old: Option<crate::NodeKind>,
+    pub new: Option<crate::NodeKind>,
+    label: String,
+}
+
+impl ReplaceNodeKind {
+    pub fn new(doc: &Document, id: NodeId, new: crate::NodeKind, label: impl Into<String>) -> Self {
+        let old = doc.node(id).map(|n| n.kind.clone());
+        Self { id, old, new: Some(new), label: label.into() }
+    }
+}
+
+impl Command for ReplaceNodeKind {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if let (Some(node), Some(new)) = (doc.node_mut(self.id), self.new.clone()) {
+            node.kind = new;
+        }
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        if let (Some(node), Some(old)) = (doc.node_mut(self.id), self.old.clone()) {
+            node.kind = old;
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Document canvas resize (anchor top-left; no resampling — RAS-5 subset).
 #[derive(Debug)]
 pub struct CanvasResize {

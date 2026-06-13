@@ -8,6 +8,7 @@ pub mod blend;
 pub mod brush;
 pub mod compositor;
 pub mod ops;
+pub mod raster_vector;
 pub mod resample;
 pub mod selection;
 
@@ -15,6 +16,7 @@ pub use adjust::{apply_tile, target_tiles, Adjustment};
 pub use blend::{blend_rgb, dissolve_keeps};
 pub use brush::{segment_tiles, stamp_segment, stamp_segment_clipped, BrushParams};
 pub use compositor::composite_rgba8;
+pub use raster_vector::rasterize_vector;
 pub use resample::{resample_layer, sample_bilinear, transform_layer};
 
 /// The one true f32 -> u8 quantization both compositors use.

@@ -450,6 +450,26 @@ impl AtelierApp {
         st.editor.apply(Box::new(cmd));
     }
 
+    /// Rasterize the selected vector layer into a raster layer (INT-2).
+    fn rasterize_selected_layer(&mut self) {
+        use atelier_core::{NodeKind, RasterContent};
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let (content, [w, h]) = match st.editor.doc.node(id).map(|n| &n.kind) {
+            Some(NodeKind::Vector(c)) => (c.clone(), st.editor.doc.size),
+            _ => return,
+        };
+        let tiles = atelier_raster::rasterize_vector(&content, w, h);
+        let new_kind = NodeKind::Raster(RasterContent { tiles, ..Default::default() });
+        let cmd = atelier_core::command::ReplaceNodeKind::new(
+            &st.editor.doc,
+            id,
+            new_kind,
+            "Rasterize Layer",
+        );
+        st.editor.apply(Box::new(cmd));
+    }
+
     /// Insert a non-destructive adjustment layer above the selection.
     fn add_adjustment_layer(&mut self, adj: atelier_raster::Adjustment) {
         use atelier_core::{LayerProps, Node, NodeKind};
@@ -735,6 +755,19 @@ impl AtelierApp {
                     let has = self.state.is_some();
                     if ui.add_enabled(has, egui::Button::new("Transform…")).clicked() {
                         self.transform_dialog = Some([100.0, 100.0, 0.0]);
+                        ui.close_menu();
+                    }
+                    let is_vector = self.state.as_ref().is_some_and(|s| {
+                        s.editor
+                            .selection
+                            .and_then(|id| s.editor.doc.node(id))
+                            .is_some_and(|n| matches!(n.kind, atelier_core::NodeKind::Vector(_)))
+                    });
+                    if ui
+                        .add_enabled(is_vector, egui::Button::new("Rasterize Layer"))
+                        .clicked()
+                    {
+                        self.rasterize_selected_layer();
                         ui.close_menu();
                     }
                     ui.separator();
@@ -1752,6 +1785,56 @@ mod ui_tests {
         }
         h.run();
         h.run();
+    }
+
+    /// Spec 0023: rasterize a vector layer → raster layer; undo restores vector.
+    #[test]
+    fn rasterize_vector_layer_and_undo() {
+        use atelier_core::atelier_vector::{Path, Shape};
+        let mut h = harness();
+        create_doc(&mut h);
+        let id = {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let content = atelier_core::VectorContent {
+                shapes: vec![Shape::filled(Path::rect(8.0, 8.0, 20.0, 20.0), [1.0, 0.0, 0.0, 1.0])],
+            };
+            let cmd = atelier_core::command::AddNode::new(
+                &mut st.editor.doc,
+                atelier_core::Node::new(
+                    atelier_core::LayerProps::named("v"),
+                    atelier_core::NodeKind::Vector(content),
+                ),
+                root,
+                0,
+            );
+            let id = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(id);
+            id
+        };
+        h.run();
+
+        h.state_mut().rasterize_selected_layer();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Raster(c) => {
+                    assert!(!c.tiles.is_empty(), "rasterized to pixels");
+                    assert_eq!(c.tiles.pixel(16, 16), [255, 0, 0, 255], "inside the rect");
+                }
+                k => panic!("expected raster, got {}", k.kind_name()),
+            }
+        }
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(
+            matches!(
+                h.state().state.as_ref().unwrap().editor.doc.node(id).unwrap().kind,
+                NodeKind::Vector(_)
+            ),
+            "undo restored the vector layer"
+        );
     }
 
     /// Spec 0022: align a vector layer to the canvas left edge; undo restores.

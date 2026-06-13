@@ -3,7 +3,31 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-p (spec 0022 — align-to-canvas + README/env docs DONE)
+## Last session: 2026-06-13-q (spec 0023 — rasterize vector layer DONE)
+
+### Done
+- **Spec 0023 ☑** — `rasterize_vector` (tessellate + scan-fill triangles into tiles, no AA);
+  `ReplaceNodeKind` generic command; Layer → Rasterize Layer converts the selected vector
+  layer to a raster layer in place (undoable). First raster↔vector interop (INT-2).
+  raster / app 28 tests green, clippy clean, smoke clean.
+- ROADMAP: INT-2 done early (vector engine was ready).
+
+### Next
+1. **Spec 0024 — boolean path ops** (VEC-5): unite/subtract/intersect/exclude. NEW
+   `i_overlay` workspace dep — **read its API first** (flatten cubics→polygons, op, back to
+   line `Path`); `BooleanOp` command over ≥2 shapes; Pathfinder panel. Deferred repeatedly
+   because it needs the new dep — good fresh-session task.
+2. Multi-select → multi-object align/distribute; compound paths; AA for rasterize.
+3. Phase 5 proper — focus modes, place raster into vector doc, smart objects, z-interleaved
+   raster+vector compositing (currently vectors overlay the raster composite).
+
+### Watch out (additions)
+- Rasterize is hard-edged (no AA) and document-sized from origin. `ReplaceNodeKind` is the
+  reusable kind-swap command.
+- NOTE: the working tree contains transform/crop/resample (`atelier-raster::resample`,
+  Transform…/Crop menus) from earlier sessions not in this context — treat as existing.
+
+## Previous session: 2026-06-13-p (spec 0022 — align-to-canvas + README/env docs DONE)
 
 ### Done
 - **README rewritten** (user ask): full environment setup — rustup install per-OS, MSVC/
