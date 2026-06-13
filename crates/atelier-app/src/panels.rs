@@ -314,23 +314,68 @@ pub fn history_ui(ui: &mut egui::Ui, state: &mut EditorState) {
     }
 }
 
-pub fn properties_ui(ui: &mut egui::Ui, state: &EditorState) {
+pub fn properties_ui(ui: &mut egui::Ui, state: &mut EditorState) {
     let doc = &state.editor.doc;
     ui.label(format!("Size: {} × {} px", doc.size[0], doc.size[1]));
     ui.label(format!("Focus: {:?}", doc.focus));
     ui.label(format!("Color: {}", doc.color_mode));
     ui.separator();
-    match state.editor.selection.and_then(|id| doc.node(id)) {
-        Some(node) => {
-            ui.label(format!("Selected: {} ({})", node.props.name, node.kind.kind_name()));
-            ui.label(format!(
-                "Blend: {} · Opacity: {:.0}%",
-                node.props.blend.name(),
-                node.props.opacity * 100.0
-            ));
+
+    let Some(id) = state.editor.selection else {
+        ui.weak("Nothing selected");
+        return;
+    };
+    let Some(node) = doc.node(id) else {
+        ui.weak("Nothing selected");
+        return;
+    };
+    ui.label(format!("Selected: {} ({})", node.props.name, node.kind.kind_name()));
+    ui.label(format!(
+        "Blend: {} · Opacity: {:.0}%",
+        node.props.blend.name(),
+        node.props.opacity * 100.0
+    ));
+
+    // Adjustment layers expose their parameters here (undoable, live).
+    if let NodeKind::Adjustment(adj) = node.kind {
+        ui.separator();
+        adjustment_editor(ui, state, id, adj);
+    }
+}
+
+fn adjustment_editor(
+    ui: &mut egui::Ui,
+    state: &mut EditorState,
+    id: NodeId,
+    current: atelier_core::Adjustment,
+) {
+    use atelier_core::Adjustment;
+    let mut edited = current;
+    let mut changed = false;
+    match &mut edited {
+        Adjustment::Invert => {
+            ui.weak("Invert has no parameters");
         }
-        None => {
-            ui.weak("Nothing selected");
+        Adjustment::BrightnessContrast { brightness, contrast } => {
+            changed |= ui.add(egui::Slider::new(brightness, -1.0..=1.0).text("Brightness")).changed();
+            changed |= ui.add(egui::Slider::new(contrast, -1.0..=1.0).text("Contrast")).changed();
         }
+        Adjustment::Levels { black, white, gamma } => {
+            changed |= ui.add(egui::Slider::new(black, 0.0..=1.0).text("Black")).changed();
+            changed |= ui.add(egui::Slider::new(white, 0.0..=1.0).text("White")).changed();
+            changed |= ui.add(egui::Slider::new(gamma, 0.1..=5.0).text("Gamma")).changed();
+        }
+        Adjustment::HueSaturation { hue, sat, light } => {
+            changed |= ui.add(egui::Slider::new(hue, -180.0..=180.0).text("Hue")).changed();
+            changed |= ui.add(egui::Slider::new(sat, -1.0..=1.0).text("Saturation")).changed();
+            changed |= ui.add(egui::Slider::new(light, -1.0..=1.0).text("Lightness")).changed();
+        }
+    }
+    if changed {
+        // Coalesce slider drags into one undo entry.
+        state.editor.history.set_merging(true);
+        let cmd = atelier_core::command::SetAdjustment::new(&state.editor.doc, id, edited);
+        state.editor.apply(Box::new(cmd));
+        state.editor.history.set_merging(false);
     }
 }

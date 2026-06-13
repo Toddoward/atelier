@@ -3,7 +3,33 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-b (spec 0008 — Phase 3 slice b DONE)
+## Last session: 2026-06-13-c (spec 0009 — Phase 3 slice c DONE)
+
+### Done
+- **Spec 0009 ☑** — non-destructive adjustment layers. Moved `Adjustment` enum + pixel
+  math to `atelier-core::adjust`; `NodeKind::Adjustment(Adjustment)`; `CompositeOp::Adjust`;
+  CPU compositor re-tones the backdrop below (visibility + opacity-as-amount); `.atl`
+  round-trips; app "Layer → New Adjustment Layer →" inserts above selection; Properties
+  panel edits params via merge-coalesced `SetAdjustment`. 87 tests, clippy clean, smoke clean.
+- GPU compositor skips Adjust ops (no-op) — parity debt **R-13** (canvas uses CPU path, so
+  output is correct; port to WGSL before any GPU→canvas wiring).
+- ROADMAP Phase 3 still ◐ (slices a+b+c done).
+
+### Next
+1. **Spec 0010 — Phase 3 slice d**: free transform (scale/rotate/skew of a raster layer via
+   resampled tiles), crop tool, image resample. Transform needs a resampler
+   (nearest+bilinear) in atelier-raster; commands capture before/after tiles (PaintTiles
+   pattern) or an affine on RasterContent — decide at spec time (record as D-13).
+2. Magic wand + feather/grow/invert-selection (selection slice).
+3. Then Phase 4 (vector engine).
+
+### Watch out (additions)
+- `Adjustment` now lives in `atelier-core`; `atelier-raster` re-exports it. New blend/adjust
+  math added in core must stay pure (no GPU/UI deps).
+- Adjustment layers are CPU-only in the compositor (R-13). Don't add them to GPU golden
+  fixtures until WGSL adjustment exists.
+
+## Previous session: 2026-06-13-b (spec 0008 — Phase 3 slice b DONE)
 
 ### Done
 - **Spec 0008 ☑** — `atelier-raster::adjust` (Invert, Brightness/Contrast, Levels,

@@ -73,6 +73,15 @@ This machine is Win11 x64 → Tier-2/3 claims are untested locally. **Mitigation
 (GitHub Actions: windows/macos/ubuntu runners) from Phase 0–1 so cross-platform drift is
 caught continuously even though local dev is Windows.
 
+## R-13 · GPU compositor lacks adjustment-layer + offset-shift execution parity
+The CPU compositor (which drives the canvas) applies adjustment layers (spec 0009) and
+samples offset layers directly; the GPU compositor treats `CompositeOp::Adjust` as a no-op
+and relies on CPU-extracted shifted tiles. Golden parity fixtures therefore exclude
+adjustment layers. **Mitigation:** GPU is parity-validation only today — the canvas never
+uses it — so users see correct output. When the GPU compositor is wired to the canvas (perf
+slice), adjustment math must be ported to WGSL and golden fixtures extended to cover
+adjustment layers before that switch flips. Tracked; do not wire GPU→canvas until closed.
+
 ## Plan-review verdict
 Goal is sound and achievable **as tiered**: the original prompt's flexibility clauses
 (fallback platform floor, "would be great" phrasing on AI/3D/parity items, explicit

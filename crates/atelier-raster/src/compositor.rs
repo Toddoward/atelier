@@ -113,6 +113,20 @@ fn blend_onto(backdrop: &mut Buffer, src: &dyn Source, mode: BlendMode, opacity:
     }
 }
 
+/// Re-tone every pixel of the backdrop in place (adjustment layer). Works in
+/// u8 space (canvas is 8-bit) for parity with the destructive path; alpha kept.
+fn adjust_backdrop(backdrop: &mut Buffer, adj: atelier_core::Adjustment, opacity: f32) {
+    for p in &mut backdrop.px {
+        let q = crate::quantize_rgba8;
+        let u = [q(p[0]), q(p[1]), q(p[2]), q(p[3])];
+        let m = adj.map_pixel_amount(u, opacity);
+        p[0] = m[0] as f32 / 255.0;
+        p[1] = m[1] as f32 / 255.0;
+        p[2] = m[2] as f32 / 255.0;
+        // alpha (p[3]) untouched
+    }
+}
+
 /// Children are stored top-first (panel order); painter's algorithm wants
 /// bottom-first, so iterate reversed.
 fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
@@ -126,6 +140,9 @@ fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
             NodeKind::Raster(content) => {
                 let src = TileSource { tiles: &content.tiles, offset: content.offset };
                 blend_onto(backdrop, &src, props.blend, props.opacity);
+            }
+            NodeKind::Adjustment(adj) => {
+                adjust_backdrop(backdrop, *adj, props.opacity);
             }
             NodeKind::Group { .. } => {
                 if props.blend == BlendMode::PassThrough && props.opacity >= 1.0 {
@@ -318,6 +335,59 @@ mod tests {
 
     /// Region composite must equal the slice of the full composite — including
     /// Dissolve (absolute-coord hash) and offset layers.
+    #[test]
+    fn adjustment_layer_retones_only_below() {
+        use atelier_core::Adjustment;
+        let mut doc = Document::new([4, 4], ProjectFocus::Raster);
+        let root = doc.root();
+        // bottom (red) — below the adjust; top (green) — above it.
+        add(&mut doc, solid_layer("below", [0.0, 0.0, 4.0, 4.0], [1.0, 0.0, 0.0, 1.0]), root, 0);
+        let adj = add(
+            &mut doc,
+            Node::new(
+                atelier_core::LayerProps::named("inv"),
+                NodeKind::Adjustment(Adjustment::Invert),
+            ),
+            root,
+            0,
+        );
+        let _ = adj;
+        // 'top' painted only on the right half so we can see both regions.
+        add(&mut doc, solid_layer("top", [2.0, 0.0, 2.0, 4.0], [0.0, 1.0, 0.0, 1.0]), root, 0);
+
+        let out = composite_rgba8(&doc, 4, 4);
+        // Left col: only 'below' red, inverted by the adjust → cyan.
+        assert_eq!(px(&out, 4, 0, 0), [0, 255, 255, 255], "below inverted");
+        // Right col: 'top' green sits above the adjust → untouched.
+        assert_eq!(px(&out, 4, 3, 0), [0, 255, 0, 255], "above adjust untouched");
+    }
+
+    #[test]
+    fn adjustment_layer_respects_visibility_and_opacity() {
+        use atelier_core::Adjustment;
+        let build = |visible: bool, opacity: f32| {
+            let mut doc = Document::new([2, 2], ProjectFocus::Raster);
+            let root = doc.root();
+            add(&mut doc, solid_layer("b", [0.0, 0.0, 2.0, 2.0], [0.0, 0.0, 0.0, 1.0]), root, 0);
+            let a = add(
+                &mut doc,
+                Node::new(
+                    atelier_core::LayerProps::named("inv"),
+                    NodeKind::Adjustment(Adjustment::Invert),
+                ),
+                root,
+                0,
+            );
+            doc.node_mut(a).unwrap().props.visible = visible;
+            doc.node_mut(a).unwrap().props.opacity = opacity;
+            composite_rgba8(&doc, 2, 2)
+        };
+        assert_eq!(px(&build(false, 1.0), 2, 0, 0), [0, 0, 0, 255], "hidden adjust = no-op");
+        assert_eq!(px(&build(true, 1.0), 2, 0, 0), [255, 255, 255, 255], "full invert");
+        let half = build(true, 0.5);
+        assert!((px(&half, 2, 0, 0)[0] as i32 - 128).abs() <= 1, "opacity lerps");
+    }
+
     #[test]
     fn region_equals_slice_of_full() {
         let mut doc = Document::new([96, 96], ProjectFocus::Raster);

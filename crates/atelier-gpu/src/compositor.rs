@@ -176,6 +176,13 @@ impl GpuCompositor {
                             });
                             dispatch(&mut encoder, &self.pipeline_tile, &bg);
                         }
+                        CompositeOp::Adjust { .. } => {
+                            // GPU adjustment execution is deferred (spec 0009):
+                            // the GPU compositor is parity-validation only and
+                            // golden fixtures exclude adjustment layers. The
+                            // canvas composites on the CPU path, which applies
+                            // adjustment layers. See docs/RISKS.md R-13.
+                        }
                         CompositeOp::Push => stack.push(new_f32buf("isolated")),
                         CompositeOp::Pop { mode, opacity } => {
                             let src = stack.pop().expect("balanced push/pop");

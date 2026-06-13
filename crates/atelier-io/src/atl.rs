@@ -222,6 +222,30 @@ mod tests {
     }
 
     #[test]
+    fn round_trips_adjustment_layer() {
+        use atelier_core::{Adjustment, LayerProps};
+        let mut doc = Document::new([16, 16], ProjectFocus::Raster);
+        let root = doc.root();
+        let adj = Adjustment::Levels { black: 0.1, white: 0.9, gamma: 1.5 };
+        let mut add = AddNode::new(
+            &mut doc,
+            Node::new(LayerProps::named("levels"), NodeKind::Adjustment(adj)),
+            root,
+            0,
+        );
+        add.apply(&mut doc);
+        let path = temp("adjlayer");
+        save_atl(&doc, &path).unwrap();
+        let loaded = load_atl(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(doc, loaded);
+        match &loaded.node(add.id).unwrap().kind {
+            NodeKind::Adjustment(a) => assert_eq!(*a, adj),
+            _ => panic!("adjustment layer expected"),
+        }
+    }
+
+    #[test]
     fn rejects_future_schema_version() {
         let path = temp("future");
         let mut zip = ZipWriter::new(File::create(&path).unwrap());

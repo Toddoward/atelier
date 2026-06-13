@@ -315,6 +315,56 @@ impl Command for SetSelection {
     }
 }
 
+/// Edit an adjustment layer's parameters (Properties panel — spec 0009).
+#[derive(Debug)]
+pub struct SetAdjustment {
+    pub id: NodeId,
+    pub old: crate::Adjustment,
+    pub new: crate::Adjustment,
+}
+
+impl SetAdjustment {
+    pub fn new(doc: &Document, id: NodeId, new: crate::Adjustment) -> Self {
+        let old = match &doc.node(id).expect("node present").kind {
+            crate::NodeKind::Adjustment(a) => *a,
+            _ => panic!("SetAdjustment on non-adjustment node"),
+        };
+        Self { id, old, new }
+    }
+}
+
+impl SetAdjustment {
+    fn set(&self, doc: &mut Document, a: crate::Adjustment) {
+        if let crate::NodeKind::Adjustment(slot) = &mut doc.node_mut(self.id).expect("node").kind {
+            *slot = a;
+        }
+    }
+}
+
+impl Command for SetAdjustment {
+    fn label(&self) -> String {
+        "Edit Adjustment".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.set(doc, self.new);
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        self.set(doc, self.old);
+    }
+    fn try_merge(&mut self, next: &dyn Any) -> bool {
+        if let Some(n) = next.downcast_ref::<Self>() {
+            if n.id == self.id {
+                self.new = n.new;
+                return true;
+            }
+        }
+        false
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Document canvas resize (anchor top-left; no resampling — RAS-5 subset).
 #[derive(Debug)]
 pub struct CanvasResize {
@@ -398,6 +448,38 @@ mod tests {
         assert!(doc.node(id).is_none());
         add.apply(&mut doc);
         assert!(doc.node(id).is_some());
+    }
+
+    #[test]
+    fn set_adjustment_apply_revert_and_merge() {
+        let mut doc = Document::new([16, 16], ProjectFocus::Raster);
+        let root = doc.root();
+        let mut add = AddNode::new(
+            &mut doc,
+            Node::new(
+                LayerProps::named("adj"),
+                NodeKind::Adjustment(crate::Adjustment::Invert),
+            ),
+            root,
+            0,
+        );
+        add.apply(&mut doc);
+        let id = add.id;
+        let baseline = doc.clone();
+
+        let new = crate::Adjustment::BrightnessContrast { brightness: 0.2, contrast: 0.1 };
+        let mut cmd = SetAdjustment::new(&doc, id, new);
+        cmd.apply(&mut doc);
+        match doc.node(id).unwrap().kind {
+            NodeKind::Adjustment(a) => assert_eq!(a, new),
+            _ => panic!(),
+        }
+        cmd.revert(&mut doc);
+        assert_eq!(doc, baseline);
+
+        // Merge coalesces same-target edits.
+        let next = SetAdjustment::new(&doc, id, crate::Adjustment::Invert);
+        assert!(cmd.try_merge(next.as_any()));
     }
 
     #[test]

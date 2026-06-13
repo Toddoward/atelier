@@ -2,12 +2,14 @@
 //! GPU compositor executes (spec 0004). Mirrors `compositor::composite_children`
 //! semantics exactly; golden tests pin the two together.
 
-use atelier_core::{BlendMode, Document, NodeId, NodeKind, TileMap};
+use atelier_core::{Adjustment, BlendMode, Document, NodeId, NodeKind, TileMap};
 
 #[derive(Debug)]
 pub enum CompositeOp<'a> {
     /// Composite a raster layer's tiles (drawn at `offset`) onto the stack top.
     Layer { tiles: &'a TileMap, offset: [i32; 2], mode: BlendMode, opacity: f32 },
+    /// Non-destructively re-tone the current stack top (adjustment layer).
+    Adjust { adj: Adjustment, opacity: f32 },
     /// Open an isolated transparent buffer (non-pass-through group).
     Push,
     /// Blend the isolated buffer onto the previous top and discard it.
@@ -36,6 +38,9 @@ fn walk<'a>(doc: &'a Document, parent: NodeId, ops: &mut Vec<CompositeOp<'a>>) {
                     mode: props.blend,
                     opacity: props.opacity,
                 });
+            }
+            NodeKind::Adjustment(adj) => {
+                ops.push(CompositeOp::Adjust { adj: *adj, opacity: props.opacity });
             }
             NodeKind::Group { .. } => {
                 if props.blend == BlendMode::PassThrough && props.opacity >= 1.0 {
@@ -89,6 +94,7 @@ mod tests {
             .iter()
             .map(|op| match op {
                 CompositeOp::Layer { .. } => "layer",
+                CompositeOp::Adjust { .. } => "adjust",
                 CompositeOp::Push => "push",
                 CompositeOp::Pop { .. } => "pop",
             })

@@ -3,6 +3,7 @@
 //! All mutations go through [`Command`] objects executed against a [`Document`]
 //! via [`History`]; UI code never mutates the model directly.
 
+pub mod adjust;
 pub mod blend;
 pub mod command;
 pub mod document;
@@ -11,6 +12,7 @@ pub mod mask;
 pub mod node;
 pub mod tile;
 
+pub use adjust::Adjustment;
 pub use blend::BlendMode;
 pub use command::Command;
 pub use document::{Document, ProjectFocus};

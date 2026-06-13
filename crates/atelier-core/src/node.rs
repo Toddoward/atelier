@@ -1,5 +1,6 @@
 //! Layer-tree nodes (DOC-1..4 model surface).
 
+use crate::adjust::Adjustment;
 use crate::blend::BlendMode;
 use crate::tile::TileMap;
 use serde::{Deserialize, Serialize};
@@ -87,8 +88,9 @@ pub enum NodeKind {
     Group { expanded: bool },
     Raster(RasterContent),
     Vector(PlaceholderArt),
-    /// Stubs until their phases (3, 11, 10, 2): carry no data yet.
-    Adjustment,
+    /// Non-destructive adjustment layer (spec 0009): re-tones the backdrop below.
+    Adjustment(Adjustment),
+    /// Stubs until their phases (11, 10, 2): carry no data yet.
     Text,
     Smart,
     Fill,
@@ -104,7 +106,7 @@ impl NodeKind {
             NodeKind::Group { .. } => "Group",
             NodeKind::Raster(_) => "Raster",
             NodeKind::Vector(_) => "Vector",
-            NodeKind::Adjustment => "Adjustment",
+            NodeKind::Adjustment(_) => "Adjustment",
             NodeKind::Text => "Text",
             NodeKind::Smart => "Smart Object",
             NodeKind::Fill => "Fill",

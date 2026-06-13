@@ -255,6 +255,27 @@ impl AtelierApp {
         }
     }
 
+    /// Insert a non-destructive adjustment layer above the selection.
+    fn add_adjustment_layer(&mut self, adj: atelier_raster::Adjustment) {
+        use atelier_core::{LayerProps, Node, NodeKind};
+        let Some(st) = &mut self.state else { return };
+        let doc = &st.editor.doc;
+        let (parent, index) = match st.editor.selection.and_then(|s| doc.node(s).map(|n| (s, n))) {
+            Some((sel, n)) => {
+                let parent = n.parent.unwrap_or(doc.root());
+                let index =
+                    doc.children(parent).iter().position(|&c| c == sel).unwrap_or(0);
+                (parent, index)
+            }
+            None => (doc.root(), 0),
+        };
+        let node = Node::new(LayerProps::named(adj.label()), NodeKind::Adjustment(adj));
+        let cmd = atelier_core::command::AddNode::new(&mut st.editor.doc, node, parent, index);
+        let id = cmd.id;
+        st.editor.apply(Box::new(cmd));
+        st.editor.selection = Some(id);
+    }
+
     /// Apply a destructive adjustment to the selected raster layer, within the
     /// active selection (whole layer if none). One undoable PaintTiles entry.
     fn apply_adjustment(&mut self, adj: atelier_raster::Adjustment) {
@@ -427,6 +448,30 @@ impl AtelierApp {
                         self.canvas_size = size;
                         ui.close_menu();
                     }
+                });
+                ui.menu_button("Layer", |ui| {
+                    use atelier_raster::Adjustment;
+                    let has = self.state.is_some();
+                    ui.menu_button("New Adjustment Layer", |ui| {
+                        let opts = [
+                            ("Invert", Adjustment::Invert),
+                            (
+                                "Brightness/Contrast",
+                                Adjustment::BrightnessContrast { brightness: 0.0, contrast: 0.0 },
+                            ),
+                            ("Levels", Adjustment::Levels { black: 0.0, white: 1.0, gamma: 1.0 }),
+                            (
+                                "Hue/Saturation",
+                                Adjustment::HueSaturation { hue: 0.0, sat: 0.0, light: 0.0 },
+                            ),
+                        ];
+                        for (name, adj) in opts {
+                            if ui.add_enabled(has, egui::Button::new(name)).clicked() {
+                                self.add_adjustment_layer(adj);
+                                ui.close_menu();
+                            }
+                        }
+                    });
                 });
                 ui.menu_button("Adjust", |ui| {
                     use atelier_raster::Adjustment;
@@ -1250,6 +1295,44 @@ mod ui_tests {
     }
 
     /// Spec 0008: Invert via menu mutates the selected layer's pixels + undoable.
+    /// Spec 0009: adding an adjustment layer recomposites the canvas; undo reverts.
+    #[test]
+    fn adjustment_layer_via_menu_recomposites_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        // A raster layer filled with a known color below the adjustment.
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(0, 0, 64, 64, [10, 20, 30, 255]);
+                c.tiles = t;
+            }
+        }
+        h.run();
+        let composite_px = |h: &mut Harness<'static, AtelierApp>| -> [u8; 4] {
+            let doc = &h.state().state.as_ref().unwrap().editor.doc;
+            let rgba = atelier_raster::composite_rgba8(doc, 64, 64);
+            [rgba[0], rgba[1], rgba[2], rgba[3]]
+        };
+        assert_eq!(composite_px(&mut h), [10, 20, 30, 255]);
+
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+        h.state_mut().add_adjustment_layer(atelier_raster::Adjustment::Invert);
+        h.run();
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0 + 1,
+            "adjustment layer added"
+        );
+        assert_eq!(composite_px(&mut h), [245, 235, 225, 255], "composite inverted below");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(composite_px(&mut h), [10, 20, 30, 255], "undo removed adjustment");
+    }
+
     #[test]
     fn invert_adjustment_changes_pixels_and_undoes() {
         let mut h = harness();
