@@ -1787,6 +1787,78 @@ mod ui_tests {
         h.run();
     }
 
+    /// Spec 0026: align + distribute shapes within a vector layer.
+    #[test]
+    fn align_and_distribute_shapes_in_layer() {
+        use atelier_core::atelier_vector::{Path, Shape};
+        let mut h = harness();
+        create_doc(&mut h);
+        // Three 10×10 rects at different x and y.
+        let id = {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let content = atelier_core::VectorContent {
+                shapes: vec![
+                    Shape::filled(Path::rect(0.0, 0.0, 10.0, 10.0), [1.0; 4]),
+                    Shape::filled(Path::rect(40.0, 5.0, 10.0, 10.0), [1.0; 4]),
+                    Shape::filled(Path::rect(90.0, 20.0, 10.0, 10.0), [1.0; 4]),
+                ],
+            };
+            let cmd = atelier_core::command::AddNode::new(
+                &mut st.editor.doc,
+                atelier_core::Node::new(
+                    atelier_core::LayerProps::named("v"),
+                    atelier_core::NodeKind::Vector(content),
+                ),
+                root,
+                0,
+            );
+            let id = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(id);
+            id
+        };
+        h.run();
+        let tops = |h: &Harness<'static, AtelierApp>| -> Vec<f32> {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Vector(c) => c.shapes.iter().map(|s| s.path.bounds().unwrap()[1]).collect(),
+                _ => panic!(),
+            }
+        };
+        // Align Top → all share the union top (0.0).
+        panels::align_shapes_in_layer(h.state_mut().state.as_mut().unwrap(), id, panels::Align::Top);
+        h.run();
+        for t in tops(&h) {
+            assert!(t.abs() < 1e-4, "all tops aligned to 0: {t}");
+        }
+
+        // Distribute H → middle shape's center x is the mean of first/last centers.
+        panels::distribute_shapes_in_layer(h.state_mut().state.as_mut().unwrap(), id, true);
+        h.run();
+        let centers: Vec<f32> = {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Vector(c) => c
+                    .shapes
+                    .iter()
+                    .map(|s| {
+                        let b = s.path.bounds().unwrap();
+                        (b[0] + b[2]) * 0.5
+                    })
+                    .collect(),
+                _ => panic!(),
+            }
+        };
+        // shapes[0] center=5, shapes[2] center=95 (x unchanged by Top align); mid → 50.
+        assert!((centers[1] - 50.0).abs() < 1e-3, "middle evenly distributed: {centers:?}");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND); // undo distribute
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND); // undo align
+        let t = tops(&h);
+        assert!((t[1] - 5.0).abs() < 1e-4, "undo restored original tops: {t:?}");
+    }
+
     /// Spec 0024: merge shapes into a compound path, then release; both undoable.
     #[test]
     fn compound_path_make_and_release() {

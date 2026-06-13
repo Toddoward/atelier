@@ -3,7 +3,26 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-s (spec 0025 — anti-aliased rasterize DONE)
+## Last session: 2026-06-13-t (spec 0026 — align/distribute shapes DONE)
+
+### Done
+- **Spec 0026 ☑** — `panels::align_shapes_in_layer` (L/C/R/T/M/B vs union bounds) +
+  `distribute_shapes_in_layer` (even center spacing, H/V), operating on the selected vector
+  layer's shape list (no multi-select needed), undoable via SetVectorShapes, with Properties
+  buttons. VEC-6 within-layer subset. app 30 tests green, clippy clean, smoke clean.
+
+### Next
+1. **Spec 0027 — boolean path ops** (VEC-5): unite/subtract/intersect/exclude. NEW
+   `i_overlay` workspace dep — read its API first. The persistent deferred new-dep task.
+2. **Node multi-select** (selection: Option<NodeId> → set) → cross-layer align/distribute,
+   group ops; sizable refactor touching many call sites — plan carefully.
+3. Phase 5 — place image (INT-3), smart objects, z-interleaved raster+vector compositing.
+
+### Watch out (additions)
+- Vector align/distribute so far is WITHIN one layer's shapes; cross-layer needs node
+  multi-select (not yet built). Distribute is by-center, not by-gap.
+
+## Previous session: 2026-06-13-s (spec 0025 — anti-aliased rasterize DONE)
 
 ### Done
 - **Spec 0025 ☑** — rewrote `raster_vector` with 4×4 supersample coverage + straight-alpha

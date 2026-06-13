@@ -423,6 +423,29 @@ pub fn properties_ui(ui: &mut egui::Ui, state: &mut EditorState) {
                 release_compound_path(state, id);
             }
         });
+        ui.label("Align shapes");
+        ui.horizontal(|ui| {
+            for (label, a) in [
+                ("L", Align::Left),
+                ("C", Align::HCenter),
+                ("R", Align::Right),
+                ("T", Align::Top),
+                ("M", Align::VMiddle),
+                ("B", Align::Bottom),
+            ] {
+                if ui.small_button(label).clicked() {
+                    align_shapes_in_layer(state, id, a);
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.button("Distribute H").clicked() {
+                distribute_shapes_in_layer(state, id, true);
+            }
+            if ui.button("Distribute V").clicked() {
+                distribute_shapes_in_layer(state, id, false);
+            }
+        });
     }
 }
 
@@ -472,6 +495,73 @@ pub fn align_vector_to_canvas(state: &mut EditorState, id: NodeId, a: Align) {
         s.path.translate(dx, dy);
     }
     let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, new_shapes);
+    state.editor.apply(Box::new(cmd));
+}
+
+/// Per-shape bounds for every shape in a vector layer (None if any is empty).
+fn shape_bounds(shapes: &[atelier_core::atelier_vector::Shape]) -> Option<Vec<[f32; 4]>> {
+    shapes.iter().map(|s| s.path.bounds()).collect()
+}
+
+/// Align a vector layer's shapes to each other (relative to their union bounds).
+/// Undoable; no-op with < 2 shapes. Spec 0026 (VEC-6).
+pub fn align_shapes_in_layer(state: &mut EditorState, id: NodeId, a: Align) {
+    let shapes = match state.editor.doc.node(id).map(|n| &n.kind) {
+        Some(NodeKind::Vector(c)) => c.shapes.clone(),
+        _ => return,
+    };
+    if shapes.len() < 2 {
+        return;
+    }
+    let Some(bounds) = shape_bounds(&shapes) else { return };
+    let u = bounds.iter().fold(bounds[0], |o, b| {
+        [o[0].min(b[0]), o[1].min(b[1]), o[2].max(b[2]), o[3].max(b[3])]
+    });
+    let mut new = shapes.clone();
+    for (s, b) in new.iter_mut().zip(&bounds) {
+        let (dx, dy) = match a {
+            Align::Left => (u[0] - b[0], 0.0),
+            Align::Right => (u[2] - b[2], 0.0),
+            Align::HCenter => ((u[0] + u[2]) * 0.5 - (b[0] + b[2]) * 0.5, 0.0),
+            Align::Top => (0.0, u[1] - b[1]),
+            Align::Bottom => (0.0, u[3] - b[3]),
+            Align::VMiddle => (0.0, (u[1] + u[3]) * 0.5 - (b[1] + b[3]) * 0.5),
+        };
+        s.path.translate(dx, dy);
+    }
+    let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, new);
+    state.editor.apply(Box::new(cmd));
+}
+
+/// Evenly distribute a vector layer's shapes by center along an axis.
+/// Undoable; no-op with < 3 shapes. Spec 0026 (VEC-6).
+pub fn distribute_shapes_in_layer(state: &mut EditorState, id: NodeId, horizontal: bool) {
+    let shapes = match state.editor.doc.node(id).map(|n| &n.kind) {
+        Some(NodeKind::Vector(c)) => c.shapes.clone(),
+        _ => return,
+    };
+    let n = shapes.len();
+    if n < 3 {
+        return;
+    }
+    let Some(bounds) = shape_bounds(&shapes) else { return };
+    let center = |b: &[f32; 4]| if horizontal { (b[0] + b[2]) * 0.5 } else { (b[1] + b[3]) * 0.5 };
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&i, &j| center(&bounds[i]).partial_cmp(&center(&bounds[j])).expect("finite"));
+    let first = center(&bounds[order[0]]);
+    let last = center(&bounds[order[n - 1]]);
+    let step = (last - first) / (n as f32 - 1.0);
+    let mut new = shapes.clone();
+    for (rank, &idx) in order.iter().enumerate() {
+        let target = first + step * rank as f32;
+        let d = target - center(&bounds[idx]);
+        if horizontal {
+            new[idx].path.translate(d, 0.0);
+        } else {
+            new[idx].path.translate(0.0, d);
+        }
+    }
+    let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, new);
     state.editor.apply(Box::new(cmd));
 }
 
