@@ -3,7 +3,32 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-k (spec 0017 — direct-select anchor editing DONE)
+## Last session: 2026-06-13-l (spec 0018 — add/remove anchors DONE)
+
+### Done
+- **Spec 0018 ☑** — `Path::remove_anchor` (reconnects, min-2 guard) and `Path::insert_anchor`
+  (line anchor before an index); Direct Select Alt+click removes an anchor via
+  `SetVectorShapes` (undoable). `nearest_anchor` hit-test factored out. Primitives
+  unit-tested; app remove is manual-verified. app 26 / core 36 / vector tests green,
+  clippy clean, smoke clean.
+- ROADMAP Phase 4 = ◐ (slices a,b,c1,c1b,c2a,c2b,c2c done).
+
+### Next — Phase 4 continues
+1. **Spec 0019 (slice c2d)** — bezier control-handle drag: drag out handles to convert a
+   line anchor's segments to cubic and reshape curves; segment-click to insert an anchor
+   (the `insert_anchor` primitive exists, needs segment hit-testing). Then path is fully
+   editable.
+2. Booleans (i_overlay: unite/subtract/intersect/exclude) — needs the `i_overlay` workspace
+   dep; align/distribute; compound paths.
+3. Phase 5 — focus modes & raster↔vector interop (z-interleaving; vectors currently overlay).
+
+### Watch out (additions)
+- `Path::insert_anchor` exists + unit-tested but is NOT yet wired to a UI gesture (needs
+  segment hit-testing, slice c2d). Only remove (Alt+click) is wired.
+- Anchor indices follow `Path::anchors()` order; `remove_anchor(0)` promotes the first
+  segment endpoint to the new subpath start.
+
+## Previous session: 2026-06-13-k (spec 0017 — direct-select anchor editing DONE)
 
 ### Done
 - **Spec 0017 ☑** — Direct Select tool (A): drag an on-path anchor of the selected vector

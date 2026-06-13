@@ -204,6 +204,54 @@ impl Path {
         }
     }
 
+    /// Remove the anchor at `index` (order matches [`anchors`]); the path
+    /// reconnects across the gap. Returns false (no-op) if it would leave a
+    /// subpath with fewer than 2 anchors. Spec 0018.
+    pub fn remove_anchor(&mut self, index: usize) -> bool {
+        let mut i = 0;
+        for sp in &mut self.subpaths {
+            let n = 1 + sp.segs.len();
+            if index < i + n {
+                if n <= 2 {
+                    return false; // keep at least a 2-anchor subpath
+                }
+                let local = index - i;
+                if local == 0 {
+                    // Drop the first segment; its endpoint becomes the new start.
+                    let first = sp.segs.remove(0);
+                    sp.start = match first {
+                        Seg::Line(p) | Seg::Cubic(_, _, p) => p,
+                    };
+                } else {
+                    sp.segs.remove(local - 1);
+                }
+                return true;
+            }
+            i += n;
+        }
+        false
+    }
+
+    /// Insert a new line anchor at `point` immediately before the anchor at
+    /// `index` (so between anchor index-1 and index of the same subpath).
+    /// No-op for a subpath start boundary or out-of-range. Spec 0018.
+    pub fn insert_anchor(&mut self, index: usize, point: Point) -> bool {
+        let mut i = 0;
+        for sp in &mut self.subpaths {
+            let n = 1 + sp.segs.len();
+            if index < i + n {
+                let local = index - i;
+                if local == 0 {
+                    return false; // can't insert before a subpath start
+                }
+                sp.segs.insert(local - 1, Seg::Line(point));
+                return true;
+            }
+            i += n;
+        }
+        false
+    }
+
     /// Tight-ish bounds over anchor + control points (control hull, not exact
     /// curve extrema — sufficient for culling/placement).
     pub fn bounds(&self) -> Option<[f32; 4]> {
@@ -286,6 +334,31 @@ mod tests {
         let before = p.clone();
         p.move_anchor(99, [1.0, 1.0]);
         assert_eq!(p, before);
+    }
+
+    #[test]
+    fn remove_and_insert_anchor() {
+        let mut p = Path::rect(0.0, 0.0, 10.0, 10.0); // 4 anchors
+        assert!(p.remove_anchor(1));
+        assert_eq!(p.anchors().len(), 3, "removed one anchor");
+        // Insert before anchor 1 → back to 4.
+        assert!(p.insert_anchor(1, [5.0, 0.0]));
+        let a = p.anchors();
+        assert_eq!(a.len(), 4);
+        assert_eq!(a[1], [5.0, 0.0], "new anchor placed");
+        // Can't insert before a subpath start, OOB is a no-op.
+        assert!(!p.insert_anchor(0, [1.0, 1.0]));
+        assert!(!p.remove_anchor(99));
+    }
+
+    #[test]
+    fn remove_anchor_keeps_minimum_two() {
+        // A 2-anchor open path can't lose an anchor.
+        let mut p = Path::polyline(&[[0.0, 0.0], [10.0, 0.0]], false);
+        assert_eq!(p.anchors().len(), 2);
+        assert!(!p.remove_anchor(0));
+        assert!(!p.remove_anchor(1));
+        assert_eq!(p.anchors().len(), 2);
     }
 
     #[test]

@@ -279,23 +279,24 @@ fn handle_tools(
                 Some(NodeKind::Vector(c)) => c.shapes.clone(),
                 _ => return,
             };
+            // Alt+click an anchor removes it (spec 0018).
+            if response.clicked() && ui.input(|i| i.modifiers.alt) {
+                if let Some(p) = response.interact_pointer_pos() {
+                    if let Some((si, ai)) = nearest_anchor(&shapes, vp, pointer_doc(p)) {
+                        let mut new_shapes = shapes.clone();
+                        if new_shapes[si].path.remove_anchor(ai) {
+                            let cmd = SetVectorShapes::new(&state.editor.doc, id, new_shapes);
+                            state.editor.apply(Box::new(cmd));
+                        }
+                    }
+                }
+            }
             if response.drag_started_by(egui::PointerButton::Primary) {
                 let press = ui
                     .input(|i| i.pointer.press_origin())
                     .or_else(|| response.interact_pointer_pos());
                 if let Some(p) = press {
-                    let t = vp.doc_to_screen(pointer_doc(p));
-                    let mut best: Option<((usize, usize), f32)> = None;
-                    for (si, sh) in shapes.iter().enumerate() {
-                        for (ai, a) in sh.path.anchors().iter().enumerate() {
-                            let s = vp.doc_to_screen(*a);
-                            let d = ((s[0] - t[0]).powi(2) + (s[1] - t[1]).powi(2)).sqrt();
-                            if d < 10.0 && best.is_none_or(|(_, bd)| d < bd) {
-                                best = Some(((si, ai), d));
-                            }
-                        }
-                    }
-                    if let Some((idx, _)) = best {
+                    if let Some(idx) = nearest_anchor(&shapes, vp, pointer_doc(p)) {
                         state.anchor_drag = Some(idx);
                         state.editor.history.set_merging(true);
                     }
@@ -345,6 +346,27 @@ fn handle_tools(
             }
         }
     }
+}
+
+/// Nearest on-path anchor (shape idx, anchor idx) within ~10 screen px of
+/// `target_doc`, across all shapes (spec 0017/0018).
+fn nearest_anchor(
+    shapes: &[atelier_core::atelier_vector::Shape],
+    vp: &Viewport,
+    target_doc: [f32; 2],
+) -> Option<(usize, usize)> {
+    let t = vp.doc_to_screen(target_doc);
+    let mut best: Option<((usize, usize), f32)> = None;
+    for (si, sh) in shapes.iter().enumerate() {
+        for (ai, a) in sh.path.anchors().iter().enumerate() {
+            let s = vp.doc_to_screen(*a);
+            let d = ((s[0] - t[0]).powi(2) + (s[1] - t[1]).powi(2)).sqrt();
+            if d < 10.0 && best.is_none_or(|(_, bd)| d < bd) {
+                best = Some(((si, ai), d));
+            }
+        }
+    }
+    best.map(|(idx, _)| idx)
 }
 
 /// Build a filled vector layer from the in-progress pen anchors (spec 0016).
