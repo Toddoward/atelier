@@ -3,7 +3,34 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-o (spec 0021 — bezier handle UI DONE; path editing complete)
+## Last session: 2026-06-13-p (spec 0022 — align-to-canvas + README/env docs DONE)
+
+### Done
+- **README rewritten** (user ask): full environment setup — rustup install per-OS, MSVC/
+  Xcode/Linux build deps, GPU drivers, build/run/test commands, status, platform tiers.
+  Reframed "no generative AI" as a scope/over-engineering exclusion (not ideology) across
+  README + VISION; recorded as **D-13**. Committed 9221f69.
+- **Spec 0022 ☑** — `Path::translate`; `panels::align_vector_to_canvas` (L/C/R/T/M/B) aligns
+  the selected vector layer's shapes (as a group) to the document bounds via SetVectorShapes
+  (undoable), with Properties buttons. No-dep subset of VEC-6. vector 17 / app 27 tests
+  green, clippy clean, smoke clean.
+- ROADMAP Phase 4 = ◐ (path editing + canvas-align done; booleans + multi-object align remain).
+
+### Next — Phase 4 finish
+1. **Spec 0023 — boolean path ops** (VEC-5): unite/subtract/intersect/exclude. Needs the NEW
+   `i_overlay` workspace dep — **read its API/docs first** (don't add blind). Plan: convert
+   `Path`→i_overlay polygons (flatten cubics to polylines), run op, convert back to a
+   line `Path`; a `BooleanOp` command over ≥2 shapes/layers; Pathfinder panel buttons.
+   Document the flattening/precision trade-off. Start this fresh — it's the reason 0022 did
+   align instead.
+2. Multi-select → multi-object align/distribute (the full VEC-6); compound paths.
+3. Phase 5 — focus modes & raster↔vector interop (z-interleaving).
+
+### Watch out (additions)
+- Align uses `Path::bounds` (control-hull, not exact curve extrema) — fine for layout.
+- Booleans deliberately deferred: new dep + unfamiliar API = fresh-session work.
+
+## Previous session: 2026-06-13-o (spec 0021 — bezier handle UI DONE; path editing complete)
 
 ### Done
 - **Spec 0021 ☑** — `Path::out_handle`/`in_handle` getters; Direct Select click selects an

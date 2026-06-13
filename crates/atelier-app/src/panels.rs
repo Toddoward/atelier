@@ -400,7 +400,71 @@ pub fn properties_ui(ui: &mut egui::Ui, state: &mut EditorState) {
                 state.editor.history.set_merging(false);
             }
         });
+        ui.label("Align to canvas");
+        ui.horizontal(|ui| {
+            for (label, a) in [
+                ("L", Align::Left),
+                ("C", Align::HCenter),
+                ("R", Align::Right),
+                ("T", Align::Top),
+                ("M", Align::VMiddle),
+                ("B", Align::Bottom),
+            ] {
+                if ui.small_button(label).clicked() {
+                    align_vector_to_canvas(state, id, a);
+                }
+            }
+        });
     }
+}
+
+/// Canvas-relative alignment for a vector layer (spec 0022).
+#[derive(Clone, Copy)]
+pub enum Align {
+    Left,
+    HCenter,
+    Right,
+    Top,
+    VMiddle,
+    Bottom,
+}
+
+/// Align a vector layer's shapes (as a group) to the document bounds. Undoable.
+pub fn align_vector_to_canvas(state: &mut EditorState, id: NodeId, a: Align) {
+    let [w, h] = state.editor.doc.size;
+    let shapes = match state.editor.doc.node(id).map(|n| &n.kind) {
+        Some(NodeKind::Vector(c)) => c.shapes.clone(),
+        _ => return,
+    };
+    // Union bounds across all shapes.
+    let mut bb: Option<[f32; 4]> = None;
+    for s in &shapes {
+        if let Some(b) = s.path.bounds() {
+            bb = Some(match bb {
+                None => b,
+                Some(o) => [o[0].min(b[0]), o[1].min(b[1]), o[2].max(b[2]), o[3].max(b[3])],
+            });
+        }
+    }
+    let Some([x0, y0, x1, y1]) = bb else { return };
+    let (w, h) = (w as f32, h as f32);
+    let (dx, dy) = match a {
+        Align::Left => (-x0, 0.0),
+        Align::Right => (w - x1, 0.0),
+        Align::HCenter => ((w - (x0 + x1)) * 0.5, 0.0),
+        Align::Top => (0.0, -y0),
+        Align::Bottom => (0.0, h - y1),
+        Align::VMiddle => (0.0, (h - (y0 + y1)) * 0.5),
+    };
+    if dx == 0.0 && dy == 0.0 {
+        return;
+    }
+    let mut new_shapes = shapes;
+    for s in &mut new_shapes {
+        s.path.translate(dx, dy);
+    }
+    let cmd = atelier_core::command::SetVectorShapes::new(&state.editor.doc, id, new_shapes);
+    state.editor.apply(Box::new(cmd));
 }
 
 /// Set the fill color of every shape in a vector layer (undoable, merged).

@@ -252,6 +252,27 @@ impl Path {
         false
     }
 
+    /// Translate every anchor and control point by `(dx, dy)`. Spec 0022.
+    pub fn translate(&mut self, dx: f32, dy: f32) {
+        let shift = |p: &mut Point| {
+            p[0] += dx;
+            p[1] += dy;
+        };
+        for sp in &mut self.subpaths {
+            shift(&mut sp.start);
+            for s in &mut sp.segs {
+                match s {
+                    Seg::Line(p) => shift(p),
+                    Seg::Cubic(a, b, c) => {
+                        shift(a);
+                        shift(b);
+                        shift(c);
+                    }
+                }
+            }
+        }
+    }
+
     /// Anchor point at global `index` (None if out of range).
     fn anchor_point(&self, index: usize) -> Option<Point> {
         self.anchors().get(index).copied()
@@ -531,6 +552,18 @@ mod tests {
         // No outgoing segment at the last anchor; no incoming at the start.
         assert!(!p.set_out_handle(3, [0.0, 0.0]));
         assert!(!p.set_in_handle(0, [0.0, 0.0]));
+    }
+
+    #[test]
+    fn translate_shifts_all_points() {
+        let mut p = Path::ellipse(0.0, 0.0, 10.0, 10.0);
+        let before = p.bounds().unwrap();
+        p.translate(5.0, -3.0);
+        let after = p.bounds().unwrap();
+        assert!((after[0] - (before[0] + 5.0)).abs() < 1e-4);
+        assert!((after[1] - (before[1] - 3.0)).abs() < 1e-4);
+        assert!((after[2] - (before[2] + 5.0)).abs() < 1e-4);
+        assert!((after[3] - (before[3] - 3.0)).abs() < 1e-4);
     }
 
     #[test]

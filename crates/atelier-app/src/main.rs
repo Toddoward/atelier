@@ -1754,6 +1754,52 @@ mod ui_tests {
         h.run();
     }
 
+    /// Spec 0022: align a vector layer to the canvas left edge; undo restores.
+    #[test]
+    fn vector_align_to_canvas_left_and_undo() {
+        use atelier_core::atelier_vector::{Path, Shape};
+        let mut h = harness(); // 64×64 doc
+        create_doc(&mut h);
+        let id = {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let content = atelier_core::VectorContent {
+                shapes: vec![Shape::filled(Path::rect(20.0, 10.0, 8.0, 8.0), [1.0; 4])],
+            };
+            let cmd = atelier_core::command::AddNode::new(
+                &mut st.editor.doc,
+                atelier_core::Node::new(
+                    atelier_core::LayerProps::named("v"),
+                    atelier_core::NodeKind::Vector(content),
+                ),
+                root,
+                0,
+            );
+            let id = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(id);
+            id
+        };
+        h.run();
+        let left = |h: &Harness<'static, AtelierApp>| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Vector(c) => c.shapes[0].path.bounds().unwrap()[0],
+                _ => panic!(),
+            }
+        };
+        assert_eq!(left(&h), 20.0);
+        panels::align_vector_to_canvas(
+            h.state_mut().state.as_mut().unwrap(),
+            id,
+            panels::Align::Left,
+        );
+        h.run();
+        assert!((left(&h) - 0.0).abs() < 1e-4, "aligned to left edge");
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(left(&h), 20.0, "undo restored position");
+    }
+
     /// Vector layer fill editing (Properties): undoable, restores on undo.
     #[test]
     fn vector_fill_edit_applies_and_undoes() {
