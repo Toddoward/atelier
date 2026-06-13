@@ -49,6 +49,7 @@ pub enum ActiveTool {
     ShapeEllipse,
     ShapePolygon,
     ShapeStar,
+    Pen,
 }
 
 /// Which primitive a shape-tool drag produces (spec 0014/0015).
@@ -133,6 +134,8 @@ pub struct EditorState {
     /// Pending shape insertion (kind, doc min, doc max) from a shape-tool drag
     /// — drained by the app loop into `add_shape_layer` (spec 0014/0015).
     pub pending_shape: Option<(ShapeKind, [f32; 2], [f32; 2])>,
+    /// In-progress pen path anchors in doc space (spec 0016).
+    pub pen_points: Vec<[f32; 2]>,
 }
 
 /// Doc-space unit segments outlining the selection boundary.
@@ -278,6 +281,7 @@ impl AtelierApp {
                     wand_click: None,
                     vector_cache: None,
                     pending_shape: None,
+                    pen_points: Vec::new(),
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -644,6 +648,9 @@ impl AtelierApp {
                     if i.key_pressed(Key::U) {
                         st.tool = ActiveTool::ShapeRect;
                     }
+                    if i.key_pressed(Key::P) {
+                        st.tool = ActiveTool::Pen;
+                    }
                     if i.key_pressed(Key::W) {
                         st.tool = ActiveTool::MagicWand;
                     }
@@ -876,6 +883,7 @@ impl AtelierApp {
                     wand_click: None,
                     vector_cache: None,
                     pending_shape: None,
+                    pen_points: Vec::new(),
             });
             self.viewport = Viewport::default();
         } else if cancel {
@@ -1713,6 +1721,78 @@ mod ui_tests {
         assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_none());
         send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
         assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_some());
+    }
+
+    /// A single primary click at `pos` (press+release, no drag).
+    fn pointer_click(h: &mut Harness<'static, AtelierApp>, pos: egui::Pos2) {
+        h.input_mut().events.push(egui::Event::PointerMoved(pos));
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.run();
+        h.run();
+    }
+
+    /// Spec 0016: pen clicks build a path; Enter finishes one vector layer; undo removes it.
+    #[test]
+    fn pen_tool_builds_path_layer_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        h.state_mut().state.as_mut().unwrap().tool = ActiveTool::Pen;
+        h.run();
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+
+        pointer_click(&mut h, egui::pos2(560.0, 380.0));
+        pointer_click(&mut h, egui::pos2(660.0, 380.0));
+        pointer_click(&mut h, egui::pos2(610.0, 460.0));
+        assert_eq!(
+            h.state().state.as_ref().unwrap().pen_points.len(),
+            3,
+            "three anchors placed, not yet finished"
+        );
+
+        send_key(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
+        let st = h.state().state.as_ref().unwrap();
+        assert_eq!(st.editor.doc.node_count(), n0 + 1, "Enter finished one vector layer");
+        assert!(st.pen_points.is_empty(), "pen state cleared");
+        let id = st.editor.selection.expect("path layer selected");
+        match &st.editor.doc.node(id).unwrap().kind {
+            NodeKind::Vector(c) => {
+                assert_eq!(c.shapes.len(), 1);
+                let sp = &c.shapes[0].path.subpaths[0];
+                assert_eq!(sp.segs.len(), 2, "3 anchors = start + 2 line segs");
+                assert!(sp.closed, "Enter with >=3 anchors closes the path");
+            }
+            k => panic!("expected vector layer, got {}", k.kind_name()),
+        }
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0,
+            "undo removed the path layer"
+        );
+    }
+
+    /// Escape abandons the in-progress pen path without inserting anything.
+    #[test]
+    fn pen_tool_escape_inserts_nothing() {
+        let mut h = harness();
+        create_doc(&mut h);
+        h.state_mut().state.as_mut().unwrap().tool = ActiveTool::Pen;
+        h.run();
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+        pointer_click(&mut h, egui::pos2(560.0, 380.0));
+        pointer_click(&mut h, egui::pos2(660.0, 380.0));
+        send_key(&mut h, egui::Key::Escape, egui::Modifiers::NONE);
+        let st = h.state().state.as_ref().unwrap();
+        assert!(st.pen_points.is_empty(), "escape cleared anchors");
+        assert_eq!(st.editor.doc.node_count(), n0, "nothing inserted");
     }
 
     /// Spec 0014: a shape-tool drag inserts one vector layer; undo removes it.

@@ -99,6 +99,21 @@ impl Path {
         b.build()
     }
 
+    /// Open or closed polyline through `points` (pen tool, spec 0016).
+    pub fn polyline(points: &[Point], closed: bool) -> Path {
+        let mut b = PathBuilder::new();
+        if let Some((first, rest)) = points.split_first() {
+            b.move_to(*first);
+            for p in rest {
+                b.line_to(*p);
+            }
+            if closed {
+                b.close();
+            }
+        }
+        b.build()
+    }
+
     /// Regular `sides`-gon inscribed in radius `r`, first vertex pointing up.
     pub fn polygon(cx: f32, cy: f32, r: f32, sides: u32) -> Path {
         let sides = sides.max(3);

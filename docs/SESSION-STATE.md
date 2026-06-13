@@ -3,7 +3,33 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-i (specs 0014 + 0015 — Phase 4 shape tools DONE)
+## Last session: 2026-06-13-j (spec 0016 — pen tool DONE)
+
+### Done
+- **Spec 0016 ☑** — Pen tool (P): click to drop straight-line anchors, close by clicking
+  near the first anchor (≥3 pts) or Enter, finish open with Enter (≥2), Escape cancels;
+  inserts a filled `NodeKind::Vector` layer via `AddNode` (undoable), live preview
+  (polyline + anchor dots + rubber band). Added `Path::polyline(points, closed)`. First
+  multi-anchor authoring. app 25 tests green, clippy clean, smoke clean.
+- ROADMAP Phase 4 = ◐ (slices a,b,c1,c1b,c2a done).
+
+### Next — Phase 4 continues
+1. **Spec 0017 (slice c2b)** — direct-select / anchor editing: hit-test anchors of the
+   selected vector layer's path, drag to move them (undoable edit-path command); bezier
+   handle drag (convert line anchor ↔ curve); add/remove anchor. This is the first time we
+   *edit* existing path geometry — needs a `SetPath`/`EditShape` command in atelier-core and
+   anchor hit-testing on the canvas.
+2. Booleans (i_overlay: unite/subtract/intersect/exclude), align/distribute, compound paths.
+3. Phase 5 — focus modes & raster↔vector interop (z-interleaving; vectors currently overlay).
+
+### Watch out (additions)
+- Pen state (`pen_points`) is transient UI committed once on finish (like a brush stroke) —
+  no command until `finish_pen`. Tool-switch/new-doc should clear it (currently cleared on
+  finish/Escape only; a stray in-progress path persists if you switch tools mid-draw —
+  minor, fix in 0017).
+- All vector authoring so far is whole-shape INSERT; editing existing geometry starts in 0017.
+
+## Previous session: 2026-06-13-i (specs 0014 + 0015 — Phase 4 shape tools DONE)
 
 ### Done
 - **Spec 0014 ☑** — Rectangle (U) + Ellipse shape tools (rubber-band drag → filled vector

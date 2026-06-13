@@ -272,7 +272,64 @@ fn handle_tools(
                 }
             }
         }
+        ActiveTool::Pen => {
+            // Click drops an anchor; clicking near the first anchor closes.
+            if response.clicked() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let doc = pointer_doc(pos);
+                    let close = state.pen_points.len() >= 3 && {
+                        let f = vp.doc_to_screen(state.pen_points[0]);
+                        let c = vp.doc_to_screen(doc);
+                        ((f[0] - c[0]).powi(2) + (f[1] - c[1]).powi(2)).sqrt() < 8.0
+                    };
+                    if close {
+                        finish_pen(state, true);
+                    } else {
+                        state.pen_points.push(doc);
+                    }
+                }
+            }
+            let (enter, esc) = ui
+                .input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+            if enter && state.pen_points.len() >= 2 {
+                let closed = state.pen_points.len() >= 3;
+                finish_pen(state, closed);
+            } else if enter || esc {
+                state.pen_points.clear();
+            }
+        }
     }
+}
+
+/// Build a filled vector layer from the in-progress pen anchors (spec 0016).
+fn finish_pen(state: &mut EditorState, closed: bool) {
+    use atelier_core::atelier_vector::{Path, Shape};
+    use atelier_core::{LayerProps, Node, NodeKind, VectorContent};
+    let pts = std::mem::take(&mut state.pen_points);
+    if pts.len() < 2 {
+        return;
+    }
+    let path = Path::polyline(&pts, closed);
+    let content = VectorContent { shapes: vec![Shape::filled(path, state.brush.vector_fill)] };
+
+    let doc = &state.editor.doc;
+    let (parent, index) = match state.editor.selection.and_then(|s| doc.node(s).map(|n| (s, n))) {
+        Some((sel, n)) => {
+            let parent = n.parent.unwrap_or(doc.root());
+            let index = doc.children(parent).iter().position(|&c| c == sel).unwrap_or(0);
+            (parent, index)
+        }
+        None => (doc.root(), 0),
+    };
+    let cmd = atelier_core::command::AddNode::new(
+        &mut state.editor.doc,
+        Node::new(LayerProps::named("Path"), NodeKind::Vector(content)),
+        parent,
+        index,
+    );
+    let id = cmd.id;
+    state.editor.apply(Box::new(cmd));
+    state.editor.selection = Some(id);
 }
 
 /// Build the shape mask, combine per modifiers, push the undoable command.
@@ -461,6 +518,31 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
                 painter.add(egui::Shape::line(pts, stroke));
             }
             _ => {}
+        }
+    }
+
+    // Pen tool: in-progress polyline + anchor dots + rubber band to cursor.
+    if state.tool == ActiveTool::Pen && !state.pen_points.is_empty() {
+        let to_screen = |p: [f32; 2]| {
+            let s = vp.doc_to_screen(p);
+            rect.min + egui::vec2(s[0], s[1])
+        };
+        let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(90, 170, 255));
+        let pts: Vec<egui::Pos2> = state.pen_points.iter().map(|&p| to_screen(p)).collect();
+        if pts.len() >= 2 {
+            painter.add(egui::Shape::line(pts.clone(), stroke));
+        }
+        for p in &pts {
+            painter.circle_filled(*p, 3.0, egui::Color32::WHITE);
+            painter.circle_stroke(*p, 3.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+        }
+        if let Some(cur) = ui.input(|i| i.pointer.latest_pos()) {
+            if rect.contains(cur) {
+                painter.line_segment(
+                    [*pts.last().expect("non-empty"), cur],
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(160)),
+                );
+            }
         }
     }
 
