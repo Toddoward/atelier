@@ -164,6 +164,28 @@ impl TileMap {
         Some(out)
     }
 
+    /// Pixel-exact content bounds `[x0, y0, x1, y1)` over non-transparent
+    /// pixels, None when empty. Per-pixel scan — use when tile granularity is
+    /// wrong (transform pivot, trim). Cf. [`TileMap::bounds`] (tile-granular).
+    pub fn pixel_bounds(&self) -> Option<[i32; 4]> {
+        let t = TILE_SIZE as i32;
+        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for (&(tx, ty), tile) in &self.tiles {
+            for iy in 0..TILE_SIZE {
+                for ix in 0..TILE_SIZE {
+                    if tile.pixel(ix, iy)[3] != 0 {
+                        let (px, py) = (tx * t + ix as i32, ty * t + iy as i32);
+                        x0 = x0.min(px);
+                        y0 = y0.min(py);
+                        x1 = x1.max(px + 1);
+                        y1 = y1.max(py + 1);
+                    }
+                }
+            }
+        }
+        (x1 > x0).then_some([x0, y0, x1, y1])
+    }
+
     /// Coarse content bounds in doc pixels `[x0, y0, x1, y1)` — tile
     /// granularity (selection outlines, invalidation), None when empty.
     pub fn bounds(&self) -> Option<[i32; 4]> {
@@ -216,6 +238,15 @@ mod tests {
         map.fill_rect(250, 250, 260, 260, [0, 0, 0, 0]);
         map.prune_blank();
         assert!(map.is_empty());
+    }
+
+    #[test]
+    fn pixel_bounds_is_exact_vs_tile_granular() {
+        let mut map = TileMap::new();
+        map.fill_rect(10, 20, 35, 50, [1, 2, 3, 255]);
+        assert_eq!(map.pixel_bounds(), Some([10, 20, 35, 50]), "exact content extent");
+        assert_eq!(map.bounds(), Some([0, 0, 256, 256]), "tile-granular differs");
+        assert_eq!(TileMap::new().pixel_bounds(), None);
     }
 
     #[test]

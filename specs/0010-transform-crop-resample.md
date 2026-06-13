@@ -65,6 +65,12 @@ can be resampled to a new pixel size. All undoable; bilinear sampling for qualit
 - **Caught a real bug:** crop-to-selection initially used `Mask::bounds()` (tile-granular,
   256-aligned) → cropped to 256px for a tiny selection. Added `Mask::pixel_bounds()`
   (per-pixel exact) and used it for crop.
+- **Second real bug, caught by CI not local:** `transform_layer` pivoted about
+  `TileMap::bounds()` (tile-granular, 256-aligned), so a small layer rotated about the tile
+  grid center instead of its content center — flinging content far away. Passed locally by
+  FP luck, failed on CI (subtract-with-overflow when the test scan found no pixels). Added
+  `TileMap::pixel_bounds()` (pixel-exact) and pivot/bake about it. Lesson reinforced: never
+  use tile-granular `bounds()` where pixel-exact extent is meant.
 - GPU golden parity occasionally flakes locally under back-to-back full-workspace runs
   (NVIDIA/Vulkan device-churn validation error); passes isolated and in most runs. Added a
   process-wide `GPU_LOCK` to serialize the two golden tests. CI is unaffected (software

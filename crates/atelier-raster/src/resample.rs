@@ -71,7 +71,7 @@ impl Affine {
 /// Offset is unchanged by the caller — content stays at the same doc position.
 fn bake(tiles: &TileMap, m: [f32; 4], pivot: [f32; 2]) -> TileMap {
     let mut out = TileMap::new();
-    let Some([bx0, by0, bx1, by1]) = tiles.bounds() else {
+    let Some([bx0, by0, bx1, by1]) = tiles.pixel_bounds() else {
         return out;
     };
     let fwd = Affine::about(m, pivot);
@@ -103,7 +103,7 @@ fn bake(tiles: &TileMap, m: [f32; 4], pivot: [f32; 2]) -> TileMap {
 /// Scale (sx,sy) then rotate (radians) the layer about its content center.
 /// Returns new tiles (offset unchanged by the caller).
 pub fn transform_layer(tiles: &TileMap, sx: f32, sy: f32, rot: f32) -> TileMap {
-    let Some([bx0, by0, bx1, by1]) = tiles.bounds() else {
+    let Some([bx0, by0, bx1, by1]) = tiles.pixel_bounds() else {
         return TileMap::new();
     };
     let pivot = [(bx0 + bx1) as f32 * 0.5, (by0 + by1) as f32 * 0.5];
@@ -181,8 +181,9 @@ mod tests {
         let mut max_x = i32::MIN;
         let mut min_y = i32::MAX;
         let mut max_y = i32::MIN;
-        for y in -10..40 {
-            for x in -10..50 {
+        let [bx0, by0, bx1, by1] = out.pixel_bounds().expect("rotated content exists");
+        for y in by0..by1 {
+            for x in bx0..bx1 {
                 if out.pixel(x, y)[3] > 0 {
                     min_x = min_x.min(x);
                     max_x = max_x.max(x);
