@@ -3,7 +3,26 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-r (spec 0024 — compound paths DONE)
+## Last session: 2026-06-13-s (spec 0025 — anti-aliased rasterize DONE)
+
+### Done
+- **Spec 0025 ☑** — rewrote `raster_vector` with 4×4 supersample coverage + straight-alpha
+  src-over (overlapping shapes blend); edges now anti-aliased. raster / app 29 tests green
+  (incl. `edges_are_antialiased`), clippy clean.
+
+### Next
+1. **Spec 0026 — boolean path ops** (VEC-5): unite/subtract/intersect/exclude. NEW
+   `i_overlay` workspace dep — read its API first (flatten cubics→polygons, op, back to line
+   `Path`); `BooleanOp` command over ≥2 shapes; Pathfinder panel. The persistent deferred
+   new-dep task — best done fresh.
+2. Multi-select → multi-object align/distribute; per-subpath fill memory; gamma-correct AA.
+3. Phase 5 — place image (INT-3), smart objects, z-interleaved raster+vector compositing.
+
+### Watch out (additions)
+- Rasterize AA blends in straight sRGB components (not linear) — matches the compositor;
+  gamma-correct AA waits for the color phase.
+
+## Previous session: 2026-06-13-r (spec 0024 — compound paths DONE)
 
 ### Done
 - **Spec 0024 ☑** — `Path::append` / `Path::split_subpaths`; `panels::make_compound_path`
