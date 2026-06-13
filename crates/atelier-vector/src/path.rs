@@ -252,6 +252,35 @@ impl Path {
         false
     }
 
+    /// Nearest point on the path's segments to `query`. Returns
+    /// `(anchor_index, distance)` where `anchor_index` is the index to pass to
+    /// [`insert_anchor`] to split that segment (its endpoint anchor). Lines are
+    /// exact; cubics are sampled. Spec 0019 groundwork.
+    pub fn closest_segment(&self, query: Point) -> Option<(usize, f32)> {
+        let mut gi = 0usize; // running global anchor index
+        let mut best: Option<(usize, f32)> = None;
+        for sp in &self.subpaths {
+            let mut prev = sp.start;
+            for (j, seg) in sp.segs.iter().enumerate() {
+                let end = match seg {
+                    Seg::Line(p) => *p,
+                    Seg::Cubic(_, _, p) => *p,
+                };
+                let d = match seg {
+                    Seg::Line(p) => dist_to_segment(query, prev, *p),
+                    Seg::Cubic(c1, c2, p) => dist_to_cubic(query, prev, *c1, *c2, *p),
+                };
+                let anchor_index = gi + 1 + j; // endpoint anchor of this segment
+                if best.is_none_or(|(_, bd)| d < bd) {
+                    best = Some((anchor_index, d));
+                }
+                prev = end;
+            }
+            gi += 1 + sp.segs.len();
+        }
+        best
+    }
+
     /// Tight-ish bounds over anchor + control points (control hull, not exact
     /// curve extrema — sufficient for culling/placement).
     pub fn bounds(&self) -> Option<[f32; 4]> {
@@ -271,6 +300,36 @@ impl Path {
         }
         Some([x0, y0, x1, y1])
     }
+}
+
+fn dist_to_segment(p: Point, a: Point, b: Point) -> f32 {
+    let (abx, aby) = (b[0] - a[0], b[1] - a[1]);
+    let len2 = abx * abx + aby * aby;
+    let t = if len2 <= 1e-9 {
+        0.0
+    } else {
+        (((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / len2).clamp(0.0, 1.0)
+    };
+    let (cx, cy) = (a[0] + abx * t, a[1] + aby * t);
+    ((p[0] - cx).powi(2) + (p[1] - cy).powi(2)).sqrt()
+}
+
+fn dist_to_cubic(p: Point, a: Point, c1: Point, c2: Point, b: Point) -> f32 {
+    const N: usize = 16;
+    let mut prev = a;
+    let mut best = f32::INFINITY;
+    for i in 1..=N {
+        let t = i as f32 / N as f32;
+        let mt = 1.0 - t;
+        let w = [mt * mt * mt, 3.0 * mt * mt * t, 3.0 * mt * t * t, t * t * t];
+        let pt = [
+            w[0] * a[0] + w[1] * c1[0] + w[2] * c2[0] + w[3] * b[0],
+            w[0] * a[1] + w[1] * c1[1] + w[2] * c2[1] + w[3] * b[1],
+        ];
+        best = best.min(dist_to_segment(p, prev, pt));
+        prev = pt;
+    }
+    best
 }
 
 #[cfg(test)]
@@ -349,6 +408,23 @@ mod tests {
         // Can't insert before a subpath start, OOB is a no-op.
         assert!(!p.insert_anchor(0, [1.0, 1.0]));
         assert!(!p.remove_anchor(99));
+    }
+
+    #[test]
+    fn closest_segment_finds_split_index() {
+        // Rect (0,0)-(10,10): anchors [0]=(0,0) [1]=(10,0) [2]=(10,10) [3]=(0,10).
+        let p = Path::rect(0.0, 0.0, 10.0, 10.0);
+        // Point near the top edge (anchor0→anchor1, endpoint anchor index 1).
+        let (idx, d) = p.closest_segment([5.0, 0.3]).unwrap();
+        assert_eq!(idx, 1, "splits the first segment");
+        assert!(d < 0.5, "close to the edge: {d}");
+        // Point near the right edge (anchor1→anchor2, endpoint index 2).
+        let (idx2, _) = p.closest_segment([10.2, 5.0]).unwrap();
+        assert_eq!(idx2, 2);
+        // Inserting at the returned index grows the path by one anchor.
+        let mut p2 = p.clone();
+        assert!(p2.insert_anchor(idx, [5.0, 0.0]));
+        assert_eq!(p2.anchors().len(), 5);
     }
 
     #[test]

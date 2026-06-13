@@ -279,6 +279,31 @@ fn handle_tools(
                 Some(NodeKind::Vector(c)) => c.shapes.clone(),
                 _ => return,
             };
+            // Double-click on a segment inserts an anchor there (spec 0019).
+            if response.double_clicked() {
+                if let Some(p) = response.interact_pointer_pos() {
+                    let q = pointer_doc(p);
+                    // Pick the shape+segment closest in screen space (~10 px).
+                    let mut hit: Option<(usize, usize)> = None;
+                    let mut best = f32::INFINITY;
+                    for (si, sh) in shapes.iter().enumerate() {
+                        if let Some((ai, d)) = sh.path.closest_segment(q) {
+                            let dscreen = d * vp.zoom;
+                            if dscreen < 10.0 && dscreen < best {
+                                best = dscreen;
+                                hit = Some((si, ai));
+                            }
+                        }
+                    }
+                    if let Some((si, ai)) = hit {
+                        let mut new_shapes = shapes.clone();
+                        if new_shapes[si].path.insert_anchor(ai, q) {
+                            let cmd = SetVectorShapes::new(&state.editor.doc, id, new_shapes);
+                            state.editor.apply(Box::new(cmd));
+                        }
+                    }
+                }
+            }
             // Alt+click an anchor removes it (spec 0018).
             if response.clicked() && ui.input(|i| i.modifiers.alt) {
                 if let Some(p) = response.interact_pointer_pos() {

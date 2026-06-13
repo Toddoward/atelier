@@ -3,7 +3,30 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-l (spec 0018 — add/remove anchors DONE)
+## Last session: 2026-06-13-m (spec 0019 — segment-click insert DONE)
+
+### Done
+- **Spec 0019 ☑** — `Path::closest_segment` (nearest point on lines/cubics → split anchor
+  index + distance; `dist_to_segment`/`dist_to_cubic` helpers). Direct Select double-click on
+  a segment inserts an anchor there via `SetVectorShapes` (undoable), completing the
+  add-anchor gesture. Primitive unit-tested; app gesture manual-verified. app 26 / core 36 /
+  vector tests green, clippy clean, smoke clean.
+- ROADMAP Phase 4 = ◐ (slices a..c2d done). Path geometry is now fully editable except
+  bezier curve handles.
+
+### Next — Phase 4 continues
+1. **Spec 0020 (slice c2e)** — bezier control-handle drag: drag handles off an anchor to
+   convert its adjacent line segments to cubics and shape curves; needs handle hit-testing +
+   a `Path` method to set in/out control points (convert Line→Cubic). True de Casteljau
+   segment split (so curve-insert preserves shape) can ride along.
+2. Booleans (i_overlay dep: unite/subtract/intersect/exclude), align/distribute, compound paths.
+3. Phase 5 — focus modes & raster↔vector interop (z-interleaving; vectors currently overlay).
+
+### Watch out (additions)
+- `closest_segment` cubic distance is a 16-sample approximation; inserting on a cubic puts
+  the anchor at the click (not an exact split) — revisit with handle work (0020).
+
+## Previous session: 2026-06-13-l (spec 0018 — add/remove anchors DONE)
 
 ### Done
 - **Spec 0018 ☑** — `Path::remove_anchor` (reconnects, min-2 guard) and `Path::insert_anchor`
