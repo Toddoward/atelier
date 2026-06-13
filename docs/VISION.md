@@ -80,7 +80,11 @@ rewrites.
 
 ## Explicit non-goals
 
-- Generative AI (text-to-image, generative fill/expand).
+- Generative AI (text-to-image, generative fill/expand). **Rationale: scope, not ideology.**
+  It's a large subsystem (model weights/hosting, prompt UX, safety, licensing) orthogonal to
+  the app's core job of precise raster+vector editing — including it would be
+  over-engineering for these goals. Classic CV *assist* (selection, masking) stays, because
+  it directly accelerates editing. (See D-13.)
 - Full Photoshop/Illustrator feature parity at v1 — we target the *core* feature set
   (see REQUIREMENTS.md priority tiers); parity grows by roadmap phase.
 - 3D scene editing (only 2D texture-map generation for 3D pipelines).
