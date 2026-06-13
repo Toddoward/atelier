@@ -77,6 +77,28 @@ impl Mask {
         self.tiles.retain(|_, t| t.iter().any(|&v| v != 0));
     }
 
+    /// Pixel-exact content bounds `[x0, y0, x1, y1)` (half-open) over set
+    /// pixels, None when empty. Slower than `bounds` (per-pixel scan) — use for
+    /// crop where tile granularity would be wrong.
+    pub fn pixel_bounds(&self) -> Option<[i32; 4]> {
+        let t = TILE_SIZE as i32;
+        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for (&(tx, ty), tile) in &self.tiles {
+            for iy in 0..TILE_SIZE {
+                for ix in 0..TILE_SIZE {
+                    if tile[iy * TILE_SIZE + ix] != 0 {
+                        let (px, py) = (tx * t + ix as i32, ty * t + iy as i32);
+                        x0 = x0.min(px);
+                        y0 = y0.min(py);
+                        x1 = x1.max(px + 1);
+                        y1 = y1.max(py + 1);
+                    }
+                }
+            }
+        }
+        (x1 > x0).then_some([x0, y0, x1, y1])
+    }
+
     /// Combine `other` into self (self = existing selection, other = new shape).
     pub fn combine(&mut self, other: &Mask, op: CombineOp) {
         match op {
@@ -170,6 +192,13 @@ mod tests {
         rep.combine(&b, CombineOp::Replace);
         assert_eq!(rep.get(2, 2), 0);
         assert_eq!(rep.get(12, 2), 255);
+    }
+
+    #[test]
+    fn pixel_bounds_is_exact_not_tile_granular() {
+        let m = rect_mask(10, 12, 25, 30);
+        assert_eq!(m.pixel_bounds(), Some([10, 12, 25, 30]));
+        assert_eq!(Mask::new().pixel_bounds(), None);
     }
 
     #[test]

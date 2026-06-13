@@ -25,6 +25,10 @@ impl Lcg {
     }
 }
 
+/// Serializes GPU tests: two devices submitting concurrently can trip a driver
+/// validation error on some adapters. One device live at a time.
+static GPU_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
     let adapter =
@@ -131,6 +135,7 @@ fn assert_parity(label: &str, cpu: &[u8], gpu_out: &[u8]) {
 
 #[test]
 fn gpu_matches_cpu_reference_within_1_lsb() {
+    let _guard = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((device, queue)) = gpu() else {
         eprintln!("SKIP: no GPU adapter available (expected on CI software runners)");
         return;
@@ -150,6 +155,7 @@ fn gpu_matches_cpu_reference_within_1_lsb() {
 
 #[test]
 fn dissolve_parity_is_exact() {
+    let _guard = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some((device, queue)) = gpu() else {
         eprintln!("SKIP: no GPU adapter available");
         return;

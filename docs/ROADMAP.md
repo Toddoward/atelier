@@ -6,7 +6,7 @@ spec's Verification Log). Do not start phase N+1 with phase N red.
 
 Status legend: ☐ not started · ◐ in progress · ☑ done
 
-Specs written so far: Phase 0 → 0001 ☑ · Phase 1 → 0002 ☑ · Phase 2 → 0003 ☑ + 0004 ☑ + 0005 ☑ + 0006 ☑ (gate met). Phase 3 → 0007 ☑ (selection model + marquee/ellipse/lasso) + 0008 ☑ (clipped paint + destructive adjustments) + 0009 ☑ (non-destructive adjustment layers). Phase 3 remaining slices: (d) free transform/crop/resample (moved from Phase 2 per D-12), plus magic wand + feather/grow/invert.
+Specs written so far: Phase 0 → 0001 ☑ · Phase 1 → 0002 ☑ · Phase 2 → 0003 ☑ + 0004 ☑ + 0005 ☑ + 0006 ☑ (gate met). Phase 3 → 0007 ☑ + 0008 ☑ + 0009 ☑ + 0010 ☑ (transform/crop/resample). Phase 3 remaining: magic wand + feather/grow/invert-selection (one more selection slice) before the phase gate; interactive on-canvas transform handles deferred.
 
 | # | Phase | Contents (req IDs) | Verify gate | Status |
 |---|-------|--------------------|-------------|--------|

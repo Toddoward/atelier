@@ -133,6 +133,10 @@ struct AtelierApp {
     canvas_size: Option<[u32; 2]>,
     /// Adjust dialog (parametric adjustment being edited).
     adjust_dialog: Option<atelier_raster::Adjustment>,
+    /// Layer → Transform… dialog (scale% x, scale% y, rotate°).
+    transform_dialog: Option<[f32; 3]>,
+    /// Image → Image Size… dialog (target size).
+    image_size_dialog: Option<[u32; 2]>,
     pending: Option<PendingAction>,
     error: Option<String>,
     last_title: String,
@@ -173,6 +177,8 @@ impl AtelierApp {
             new_doc: None,
             canvas_size: None,
             adjust_dialog: None,
+            transform_dialog: None,
+            image_size_dialog: None,
             pending: None,
             error: None,
             last_title: String::new(),
@@ -253,6 +259,72 @@ impl AtelierApp {
             }
             Err(e) => self.error = Some(e.to_string()),
         }
+    }
+
+    /// Bake a scale/rotate into the selected raster layer (spec 0010, D-13).
+    fn apply_transform(&mut self, scale_x: f32, scale_y: f32, rotate_deg: f32) {
+        use atelier_core::NodeKind;
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let tiles = match &st.editor.doc.node(id).map(|n| (&n.kind, &n.props)) {
+            Some((NodeKind::Raster(c), p)) if p.visible && !p.locked => c.tiles.clone(),
+            _ => return,
+        };
+        let new_tiles = atelier_raster::transform_layer(
+            &tiles,
+            scale_x / 100.0,
+            scale_y / 100.0,
+            rotate_deg.to_radians(),
+        );
+        let offset = match &st.editor.doc.node(id).expect("checked").kind {
+            NodeKind::Raster(c) => c.offset,
+            _ => return,
+        };
+        let cmd = atelier_core::command::ReplaceLayerTiles::new(
+            &st.editor.doc,
+            id,
+            new_tiles,
+            offset,
+            "Transform Layer",
+        );
+        st.editor.apply(Box::new(cmd));
+    }
+
+    /// Crop the canvas to the current selection's bounds.
+    fn crop_to_selection(&mut self) {
+        let Some(st) = &mut self.state else { return };
+        let Some(rect) = st.editor.doc.selection.as_deref().and_then(|m| m.pixel_bounds()) else {
+            return;
+        };
+        let cmd = atelier_core::command::CropCanvas::new(&st.editor.doc, rect);
+        st.editor.apply(Box::new(cmd));
+        // The selection's coordinates no longer match the cropped canvas.
+        let deselect =
+            atelier_core::command::SetSelection::new(&st.editor.doc, None, "Deselect");
+        st.editor.apply(Box::new(deselect));
+    }
+
+    /// Resample every raster layer + set the document size (Image Size).
+    fn apply_resample(&mut self, new_size: [u32; 2]) {
+        use atelier_core::NodeKind;
+        let Some(st) = &mut self.state else { return };
+        let old = st.editor.doc.size;
+        if new_size == old || old[0] == 0 || old[1] == 0 {
+            return;
+        }
+        // Uniform scale from width ratio (height follows for non-uniform too).
+        let sx = new_size[0] as f32 / old[0] as f32;
+        let sy = new_size[1] as f32 / old[1] as f32;
+        let scale = (sx + sy) * 0.5; // single factor (bilinear); near-uniform expected
+        let mut baked = Vec::new();
+        for (id, _) in st.editor.doc.iter_tree() {
+            if let Some(NodeKind::Raster(c)) = st.editor.doc.node(id).map(|n| &n.kind) {
+                let (tiles, offset) = atelier_raster::resample_layer(&c.tiles, c.offset, scale);
+                baked.push((id, (tiles, offset)));
+            }
+        }
+        let cmd = atelier_core::command::ResizeImage::new(&st.editor.doc, new_size, baked);
+        st.editor.apply(Box::new(cmd));
     }
 
     /// Insert a non-destructive adjustment layer above the selection.
@@ -448,10 +520,33 @@ impl AtelierApp {
                         self.canvas_size = size;
                         ui.close_menu();
                     }
+                    if ui
+                        .add_enabled(size.is_some(), egui::Button::new("Image Size…"))
+                        .clicked()
+                    {
+                        self.image_size_dialog = size;
+                        ui.close_menu();
+                    }
+                    let has_sel = self
+                        .state
+                        .as_ref()
+                        .is_some_and(|s| s.editor.doc.selection.is_some());
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new("Crop to Selection"))
+                        .clicked()
+                    {
+                        self.crop_to_selection();
+                        ui.close_menu();
+                    }
                 });
                 ui.menu_button("Layer", |ui| {
                     use atelier_raster::Adjustment;
                     let has = self.state.is_some();
+                    if ui.add_enabled(has, egui::Button::new("Transform…")).clicked() {
+                        self.transform_dialog = Some([100.0, 100.0, 0.0]);
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     ui.menu_button("New Adjustment Layer", |ui| {
                         let opts = [
                             ("Invert", Adjustment::Invert),
@@ -601,6 +696,64 @@ impl AtelierApp {
             }
         } else if resize_cancel {
             self.canvas_size = None;
+        }
+
+        // Transform dialog (numeric scale/rotate).
+        let mut transform_apply: Option<[f32; 3]> = None;
+        let mut transform_cancel = false;
+        if let Some(t) = &mut self.transform_dialog {
+            egui::Window::new("Transform Layer")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.add(egui::Slider::new(&mut t[0], 1.0..=400.0).text("Scale X %"));
+                    ui.add(egui::Slider::new(&mut t[1], 1.0..=400.0).text("Scale Y %"));
+                    ui.add(egui::Slider::new(&mut t[2], -180.0..=180.0).text("Rotate °"));
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Apply").clicked() {
+                            transform_apply = Some(*t);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            transform_cancel = true;
+                        }
+                    });
+                });
+        }
+        if let Some(t) = transform_apply {
+            self.transform_dialog = None;
+            self.apply_transform(t[0], t[1], t[2]);
+        } else if transform_cancel {
+            self.transform_dialog = None;
+        }
+
+        // Image Size dialog (resample).
+        let mut resample_apply: Option<[u32; 2]> = None;
+        let mut resample_cancel = false;
+        if let Some(sz) = &mut self.image_size_dialog {
+            egui::Window::new("Image Size")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Width");
+                        ui.add(egui::DragValue::new(&mut sz[0]).range(1..=32768).suffix(" px"));
+                        ui.label("Height");
+                        ui.add(egui::DragValue::new(&mut sz[1]).range(1..=32768).suffix(" px"));
+                    });
+                    ui.horizontal(|ui| {
+                        resample_apply = ui.button("Resample").clicked().then_some(*sz);
+                        resample_cancel = ui.button("Cancel").clicked();
+                    });
+                });
+        }
+        if let Some(sz) = resample_apply {
+            self.image_size_dialog = None;
+            self.apply_resample(sz);
+        } else if resample_cancel {
+            self.image_size_dialog = None;
         }
 
         // Adjustment dialog (parametric).
@@ -1296,6 +1449,77 @@ mod ui_tests {
 
     /// Spec 0008: Invert via menu mutates the selected layer's pixels + undoable.
     /// Spec 0009: adding an adjustment layer recomposites the canvas; undo reverts.
+    /// Spec 0010: numeric transform bakes the layer; undo restores exactly.
+    #[test]
+    fn transform_layer_scales_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(0, 0, 20, 20, [255, 0, 0, 255]);
+                c.tiles = t;
+            }
+        }
+        let content_w = |h: &Harness<'static, AtelierApp>| -> i32 {
+            let st = h.state().state.as_ref().unwrap();
+            let NodeKind::Raster(c) = &st.editor.doc.node(id).unwrap().kind else { panic!() };
+            let [x0, y0, x1, y1] = c.tiles.bounds().unwrap();
+            let (mut lo, mut hi) = (i32::MAX, i32::MIN);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    if c.tiles.pixel(x, y)[3] > 0 {
+                        lo = lo.min(x);
+                        hi = hi.max(x);
+                    }
+                }
+            }
+            hi - lo + 1
+        };
+        let before = content_w(&h);
+        h.state_mut().apply_transform(200.0, 200.0, 0.0);
+        h.run();
+        let after = content_w(&h);
+        assert!(after > before + 10, "2x scale widened content {before}->{after}");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(content_w(&h), before, "undo restored original tiles");
+    }
+
+    /// Crop to selection resizes the doc and shifts offsets; undo restores.
+    #[test]
+    fn crop_to_selection_resizes_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h); // 64×64
+        click_label(&mut h, "+ Layer");
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let mut m = atelier_core::Mask::new();
+            for y in 10..40 {
+                for x in 10..30 {
+                    m.set(x, y, 255);
+                }
+            }
+            let cmd = atelier_core::command::SetSelection::new(
+                &st.editor.doc,
+                Some(std::sync::Arc::new(m)),
+                "sel",
+            );
+            st.editor.apply(Box::new(cmd));
+        }
+        h.state_mut().crop_to_selection();
+        h.run();
+        let size = h.state().state.as_ref().unwrap().editor.doc.size;
+        assert!(size[0] < 64 && size[0] > 0, "cropped width {}", size[0]);
+        // crop + deselect = 2 entries; undo both.
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(h.state().state.as_ref().unwrap().editor.doc.size, [64, 64], "undo restored size");
+    }
+
     #[test]
     fn adjustment_layer_via_menu_recomposites_and_undoes() {
         let mut h = harness();

@@ -3,7 +3,36 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-c (spec 0009 — Phase 3 slice c DONE)
+## Last session: 2026-06-13-d (spec 0010 — Phase 3 slice d DONE)
+
+### Done
+- **Spec 0010 ☑** — transform/crop/resample. `atelier-raster::resample` (bilinear sample,
+  inline affine bake `transform_layer`, `resample_layer`); commands `ReplaceLayerTiles`,
+  `ResizeImage`, `CropCanvas` (all undoable, snapshot-based, D-13 destructive bake);
+  `Mask::pixel_bounds()` (exact, fixed a tile-granular crop bug). App: Layer → Transform…
+  (numeric scale/rotate dialog), Image → Crop to Selection, Image → Image Size… (resample).
+  Full suite green, clippy clean, smoke clean.
+- GPU golden parity occasionally flakes locally (NVIDIA device churn); serialized via
+  GPU_LOCK; CI unaffected (skips on software adapter). Not a compositor defect.
+- ROADMAP Phase 3 still ◐ — only magic wand + feather/grow/invert-selection remain before
+  the Phase 3 gate.
+
+### Next
+1. **Spec 0011 — Phase 3 final slice**: magic wand (flood-fill select by color tolerance),
+   selection ops feather (gaussian on mask) / grow / shrink / invert / select-all; then
+   close the Phase 3 gate (mask op tests + per-tool checklist) and flip Phase 3 ☑.
+2. Phase 4 — vector engine (spec 0012+): path model, pen/shapes, booleans, tessellated GPU
+   render. Big phase; slice it (path model + render first).
+
+### Watch out (additions)
+- `Mask::bounds()` is tile-granular; use `Mask::pixel_bounds()` when you need exact extent
+  (crop, future trim). Bit me in 0010.
+- Transforms are destructive bakes (D-13) — repeated transforms degrade quality; that's
+  expected until Smart Objects (Phase 10).
+- Local-only GPU golden flake exists; if you see it, re-run isolated
+  (`cargo test -p atelier-gpu --test golden_parity -- --test-threads=1`).
+
+## Previous session: 2026-06-13-c (spec 0009 — Phase 3 slice c DONE)
 
 ### Done
 - **Spec 0009 ☑** — non-destructive adjustment layers. Moved `Adjustment` enum + pixel

@@ -365,6 +365,164 @@ impl Command for SetAdjustment {
     }
 }
 
+/// Swap a raster layer's whole tile set + offset (transform bake, spec 0010).
+/// The app computes the resampled tiles via `atelier-raster`; this just stores
+/// before/after for undo.
+#[derive(Debug)]
+pub struct ReplaceLayerTiles {
+    pub id: NodeId,
+    old: Option<(crate::TileMap, [i32; 2])>,
+    new: Option<(crate::TileMap, [i32; 2])>,
+    label: String,
+}
+
+impl ReplaceLayerTiles {
+    pub fn new(
+        doc: &Document,
+        id: NodeId,
+        new_tiles: crate::TileMap,
+        new_offset: [i32; 2],
+        label: impl Into<String>,
+    ) -> Self {
+        let old = match &doc.node(id).expect("node present").kind {
+            crate::NodeKind::Raster(c) => (c.tiles.clone(), c.offset),
+            _ => panic!("ReplaceLayerTiles on non-raster node"),
+        };
+        Self { id, old: Some(old), new: Some((new_tiles, new_offset)), label: label.into() }
+    }
+
+    fn put(&self, doc: &mut Document, src: &(crate::TileMap, [i32; 2])) {
+        if let crate::NodeKind::Raster(c) = &mut doc.node_mut(self.id).expect("node").kind {
+            c.tiles = src.0.clone();
+            c.offset = src.1;
+        }
+    }
+}
+
+impl Command for ReplaceLayerTiles {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        let new = self.new.clone().expect("new present");
+        self.put(doc, &new);
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        let old = self.old.clone().expect("old present");
+        self.put(doc, &old);
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Resample the whole image to a new pixel size (spec 0010). Snapshots every
+/// affected raster layer's tiles+offset before and after.
+#[derive(Debug)]
+pub struct ResizeImage {
+    old_size: [u32; 2],
+    new_size: [u32; 2],
+    /// (id, (old tiles, old offset), (new tiles, new offset))
+    #[allow(clippy::type_complexity)]
+    layers: Vec<(NodeId, (crate::TileMap, [i32; 2]), (crate::TileMap, [i32; 2]))>,
+}
+
+impl ResizeImage {
+    pub fn new(
+        doc: &Document,
+        new_size: [u32; 2],
+        baked: Vec<(NodeId, (crate::TileMap, [i32; 2]))>,
+    ) -> Self {
+        let layers = baked
+            .into_iter()
+            .map(|(id, new)| {
+                let old = match &doc.node(id).expect("node present").kind {
+                    crate::NodeKind::Raster(c) => (c.tiles.clone(), c.offset),
+                    _ => panic!("ResizeImage layer is not raster"),
+                };
+                (id, old, new)
+            })
+            .collect();
+        Self { old_size: doc.size, new_size, layers }
+    }
+}
+
+impl Command for ResizeImage {
+    fn label(&self) -> String {
+        "Image Size".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        doc.size = self.new_size;
+        for (id, _, new) in &self.layers {
+            if let crate::NodeKind::Raster(c) = &mut doc.node_mut(*id).expect("node").kind {
+                c.tiles = new.0.clone();
+                c.offset = new.1;
+            }
+        }
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        doc.size = self.old_size;
+        for (id, old, _) in &self.layers {
+            if let crate::NodeKind::Raster(c) = &mut doc.node_mut(*id).expect("node").kind {
+                c.tiles = old.0.clone();
+                c.offset = old.1;
+            }
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Crop the canvas to a doc-space rect: resize + shift every raster layer's
+/// offset by −rect.min (no resampling). spec 0010.
+#[derive(Debug)]
+pub struct CropCanvas {
+    old_size: [u32; 2],
+    new_size: [u32; 2],
+    shift: [i32; 2],
+    rasters: Vec<NodeId>,
+}
+
+impl CropCanvas {
+    pub fn new(doc: &Document, rect: [i32; 4]) -> Self {
+        let new_size = [(rect[2] - rect[0]).max(1) as u32, (rect[3] - rect[1]).max(1) as u32];
+        let rasters = doc
+            .iter_tree()
+            .into_iter()
+            .filter(|(id, _)| matches!(doc.node(*id).map(|n| &n.kind), Some(crate::NodeKind::Raster(_))))
+            .map(|(id, _)| id)
+            .collect();
+        Self { old_size: doc.size, new_size, shift: [rect[0], rect[1]], rasters }
+    }
+
+    fn shift_all(&self, doc: &mut Document, dx: i32, dy: i32) {
+        for &id in &self.rasters {
+            if let Some(crate::NodeKind::Raster(c)) = doc.node_mut(id).map(|n| &mut n.kind) {
+                c.offset[0] += dx;
+                c.offset[1] += dy;
+            }
+        }
+    }
+}
+
+impl Command for CropCanvas {
+    fn label(&self) -> String {
+        "Crop".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        doc.size = self.new_size;
+        self.shift_all(doc, -self.shift[0], -self.shift[1]);
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        doc.size = self.old_size;
+        self.shift_all(doc, self.shift[0], self.shift[1]);
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Document canvas resize (anchor top-left; no resampling — RAS-5 subset).
 #[derive(Debug)]
 pub struct CanvasResize {
@@ -448,6 +606,68 @@ mod tests {
         assert!(doc.node(id).is_none());
         add.apply(&mut doc);
         assert!(doc.node(id).is_some());
+    }
+
+    fn raster_with_pixels() -> (Document, NodeId) {
+        let mut doc = Document::new([32, 32], ProjectFocus::Raster);
+        let root = doc.root();
+        let mut tiles = crate::TileMap::new();
+        tiles.fill_rect(0, 0, 16, 16, [9, 9, 9, 255]);
+        let node = Node::new(
+            LayerProps::named("r"),
+            NodeKind::Raster(crate::RasterContent { art: None, offset: [0, 0], tiles }),
+        );
+        let mut add = AddNode::new(&mut doc, node, root, 0);
+        add.apply(&mut doc);
+        (doc, add.id)
+    }
+
+    #[test]
+    fn replace_layer_tiles_apply_revert_identity() {
+        let (mut doc, id) = raster_with_pixels();
+        let baseline = doc.clone();
+        let mut new = crate::TileMap::new();
+        new.fill_rect(0, 0, 4, 4, [1, 2, 3, 255]);
+        let mut cmd = ReplaceLayerTiles::new(&doc, id, new, [5, 6], "Transform Layer");
+        cmd.apply(&mut doc);
+        match &doc.node(id).unwrap().kind {
+            NodeKind::Raster(c) => {
+                assert_eq!(c.offset, [5, 6]);
+                assert_eq!(c.tiles.pixel(1, 1), [1, 2, 3, 255]);
+            }
+            _ => panic!(),
+        }
+        cmd.revert(&mut doc);
+        assert_eq!(doc, baseline);
+    }
+
+    #[test]
+    fn crop_canvas_resizes_and_shifts_offsets() {
+        let (mut doc, id) = raster_with_pixels();
+        let baseline = doc.clone();
+        let mut cmd = CropCanvas::new(&doc, [4, 6, 20, 22]); // 16×16 crop at (4,6)
+        cmd.apply(&mut doc);
+        assert_eq!(doc.size, [16, 16]);
+        match &doc.node(id).unwrap().kind {
+            NodeKind::Raster(c) => assert_eq!(c.offset, [-4, -6]),
+            _ => panic!(),
+        }
+        cmd.revert(&mut doc);
+        assert_eq!(doc, baseline);
+    }
+
+    #[test]
+    fn resize_image_apply_revert_identity() {
+        let (mut doc, id) = raster_with_pixels();
+        let baseline = doc.clone();
+        let mut new = crate::TileMap::new();
+        new.fill_rect(0, 0, 8, 8, [4, 5, 6, 255]);
+        let cmd_new = vec![(id, (new, [0, 0]))];
+        let mut cmd = ResizeImage::new(&doc, [16, 16], cmd_new);
+        cmd.apply(&mut doc);
+        assert_eq!(doc.size, [16, 16]);
+        cmd.revert(&mut doc);
+        assert_eq!(doc, baseline);
     }
 
     #[test]
