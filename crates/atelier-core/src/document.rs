@@ -20,6 +20,10 @@ pub struct Document {
     pub focus: ProjectFocus,
     /// Color stub until Phase 6 (atelier-color): mode tag only.
     pub color_mode: String,
+    /// Active selection (None = nothing selected ⇒ everything editable).
+    /// Session state — not persisted (spec 0007); mutate via `SetSelection`.
+    #[serde(skip)]
+    pub selection: Option<std::sync::Arc<crate::Mask>>,
     nodes: BTreeMap<NodeId, Node>,
     root: NodeId,
     next_id: u64,
@@ -47,7 +51,15 @@ impl Document {
         let root_id = NodeId(0);
         let mut nodes = BTreeMap::new();
         nodes.insert(root_id, Node::group("__root__"));
-        Self { size, focus, color_mode: "RGB8".into(), nodes, root: root_id, next_id: 1 }
+        Self {
+            size,
+            focus,
+            color_mode: "RGB8".into(),
+            selection: None,
+            nodes,
+            root: root_id,
+            next_id: 1,
+        }
     }
 
     pub fn root(&self) -> NodeId {

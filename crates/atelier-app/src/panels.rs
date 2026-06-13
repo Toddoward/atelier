@@ -19,6 +19,9 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         (ActiveTool::Move, "Move (V)"),
         (ActiveTool::Brush, "Brush (B)"),
         (ActiveTool::Eraser, "Eraser (E)"),
+        (ActiveTool::SelectRect, "Select Rect (M)"),
+        (ActiveTool::SelectEllipse, "Select Ellipse"),
+        (ActiveTool::Lasso, "Lasso (L)"),
     ] {
         if ui.selectable_label(state.tool == tool, label).clicked() {
             state.tool = tool;

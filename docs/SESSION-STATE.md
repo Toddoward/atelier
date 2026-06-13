@@ -3,7 +3,33 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-12-e (spec 0006 — **PHASE 2 COMPLETE ☑**)
+## Last session: 2026-06-13 (spec 0007 — Phase 3 slice a DONE)
+
+### Done
+- **Spec 0007 ☑** — selection model: `atelier-core::mask::Mask` (sparse 256² u8 tiles,
+  combine Add/Subtract/Intersect/Replace), `Document.selection: Option<Arc<Mask>>`
+  (serde-skipped) + undoable `SetSelection` (Arc snapshots); `atelier-raster::selection`
+  (AA rect, supersampled ellipse, even-odd lasso, marching-squares `boundary_segments`);
+  app tools Select Rect (M) / Select Ellipse / Lasso (L) with Shift=add / Alt=subtract /
+  Shift+Alt=intersect, live drag previews, marching-ants (cached per revision), Ctrl+D
+  deselect. 73 tests green, clippy clean, smoke clean.
+- ROADMAP Phase 3 = ◐ (slice a done).
+
+### Next
+1. **Spec 0008 — Phase 3 slice b**: selection-clipped painting (brush/eraser honor the
+   active mask) + first destructive adjustments (levels/curves/brightness-contrast/
+   hue-sat/invert), each an undoable command operating within the selection.
+2. Slice c: adjustment *layers* (non-destructive node kind in the compositor).
+3. Slice d: free transform + crop + resample (moved from Phase 2, D-12).
+4. Then magic wand + feather/grow/invert UI; then Phase 4 (vector).
+
+### Watch out (additions)
+- Drag-start position must come from `pointer.press_origin()`, NOT `interact_pointer_pos`
+  (kittest coalesces press+move; the latter returns the already-moved point). Applies to
+  every future click-drag tool. Recorded in spec 0007 notes.
+- Selection is session-only (not in `.atl`) and does not yet clip paint — both are slice b+.
+
+## Previous session: 2026-06-12-e (spec 0006 — **PHASE 2 COMPLETE ☑**)
 
 ### Done
 - **Spec 0006 ☑** — `composite_region_rgba8` (region == slice-of-full, proven incl.

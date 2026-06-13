@@ -41,6 +41,9 @@ pub enum ActiveTool {
     Move,
     Brush,
     Eraser,
+    SelectRect,
+    SelectEllipse,
+    Lasso,
 }
 
 /// Brush/eraser options (Tools panel).
@@ -80,6 +83,19 @@ pub struct EditorState {
     /// Doc-space rect the live stroke dirtied this frame — the canvas patches
     /// just this region instead of recompositing the document (spec 0006).
     pub dirty_patch: Option<[i32; 4]>,
+    /// In-progress selection drag (doc coords; points only used by Lasso).
+    pub select_drag: Option<SelectDrag>,
+    /// Marching-ants boundary cache, keyed by history revision (spec 0007).
+    pub ants: Option<(u64, AntSegments)>,
+}
+
+/// Doc-space unit segments outlining the selection boundary.
+pub type AntSegments = Vec<([f32; 2], [f32; 2])>;
+
+pub struct SelectDrag {
+    pub start: [f32; 2],
+    pub current: [f32; 2],
+    pub points: Vec<[f32; 2]>,
 }
 
 impl EditorState {
@@ -202,6 +218,8 @@ impl AtelierApp {
                     brush: BrushSettings::default(),
                     stroke: None,
                     dirty_patch: None,
+                    select_drag: None,
+                    ants: None,
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -266,6 +284,21 @@ impl AtelierApp {
             self.request_open();
         }
 
+        // Deselect (Ctrl+D).
+        let deselect = KeyboardShortcut::new(CMD, Key::D);
+        if ctx.input_mut(|i| i.consume_shortcut(&deselect)) {
+            if let Some(st) = &mut self.state {
+                if st.editor.doc.selection.is_some() {
+                    let cmd = atelier_core::command::SetSelection::new(
+                        &st.editor.doc,
+                        None,
+                        "Deselect",
+                    );
+                    st.editor.apply(Box::new(cmd));
+                }
+            }
+        }
+
         // Tool keys (plain letters — only when no text field wants them).
         if !ctx.wants_keyboard_input() {
             if let Some(st) = &mut self.state {
@@ -278,6 +311,12 @@ impl AtelierApp {
                     }
                     if i.key_pressed(Key::E) {
                         st.tool = ActiveTool::Eraser;
+                    }
+                    if i.key_pressed(Key::M) {
+                        st.tool = ActiveTool::SelectRect;
+                    }
+                    if i.key_pressed(Key::L) {
+                        st.tool = ActiveTool::Lasso;
                     }
                 });
             }
@@ -391,6 +430,8 @@ impl AtelierApp {
                 brush: BrushSettings::default(),
                 stroke: None,
                     dirty_patch: None,
+                    select_drag: None,
+                    ants: None,
             });
             self.viewport = Viewport::default();
         } else if cancel {
@@ -1035,6 +1076,43 @@ mod ui_tests {
             rev,
             "viewport changes never recomposite"
         );
+    }
+
+    #[test]
+    fn rect_select_combine_and_deselect_via_ui() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "Select Rect (M)");
+        let len0 = h.state().state.as_ref().unwrap().editor.history.applied_len();
+
+        pointer_drag(&mut h, CANVAS_A, CANVAS_B);
+        {
+            let st = h.state().state.as_ref().unwrap();
+            assert!(st.editor.doc.selection.is_some(), "marquee created a selection");
+            assert_eq!(st.editor.history.applied_len(), len0 + 1, "one undoable step");
+        }
+
+        // Shift = add: second marquee, selection persists, second history entry.
+        h.input_mut().modifiers = egui::Modifiers::SHIFT;
+        pointer_drag(&mut h, egui::pos2(700.0, 300.0), egui::pos2(740.0, 330.0));
+        h.input_mut().modifiers = egui::Modifiers::NONE;
+        {
+            let st = h.state().state.as_ref().unwrap();
+            assert!(st.editor.doc.selection.is_some());
+            assert_eq!(st.editor.history.applied_len(), len0 + 2);
+            let labels: Vec<String> = st.editor.history.undo_labels().collect();
+            assert_eq!(
+                labels.iter().filter(|l| *l == "Rectangular Select").count(),
+                2,
+                "{labels:?}"
+            );
+        }
+
+        // Ctrl+D deselects, undo restores.
+        send_key(&mut h, egui::Key::D, egui::Modifiers::COMMAND);
+        assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_none());
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_some());
     }
 
     #[test]

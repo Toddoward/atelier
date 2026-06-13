@@ -281,6 +281,40 @@ impl Command for PaintTiles {
     }
 }
 
+/// Change the document selection (marquee/lasso/deselect — spec 0007).
+/// Arc snapshots make undo cheap regardless of mask size.
+#[derive(Debug)]
+pub struct SetSelection {
+    old: Option<std::sync::Arc<crate::Mask>>,
+    new: Option<std::sync::Arc<crate::Mask>>,
+    label: String,
+}
+
+impl SetSelection {
+    pub fn new(
+        doc: &Document,
+        new: Option<std::sync::Arc<crate::Mask>>,
+        label: impl Into<String>,
+    ) -> Self {
+        Self { old: doc.selection.clone(), new, label: label.into() }
+    }
+}
+
+impl Command for SetSelection {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        doc.selection = self.new.clone();
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        doc.selection = self.old.clone();
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Document canvas resize (anchor top-left; no resampling — RAS-5 subset).
 #[derive(Debug)]
 pub struct CanvasResize {
@@ -364,6 +398,34 @@ mod tests {
         assert!(doc.node(id).is_none());
         add.apply(&mut doc);
         assert!(doc.node(id).is_some());
+    }
+
+    #[test]
+    fn set_selection_apply_revert_identity() {
+        let mut doc = Document::new([32, 32], ProjectFocus::Raster);
+        let baseline = doc.clone();
+        let mut mask = crate::Mask::new();
+        mask.set(3, 3, 255);
+        let mut cmd =
+            SetSelection::new(&doc, Some(std::sync::Arc::new(mask)), "Rectangular Select");
+        cmd.apply(&mut doc);
+        assert!(doc.selection.is_some());
+        cmd.revert(&mut doc);
+        assert_eq!(doc, baseline);
+
+        // Deselect path round-trips too.
+        let mask2 = {
+            let mut m = crate::Mask::new();
+            m.set(1, 1, 200);
+            m
+        };
+        doc.selection = Some(std::sync::Arc::new(mask2));
+        let with_sel = doc.clone();
+        let mut clear = SetSelection::new(&doc, None, "Deselect");
+        clear.apply(&mut doc);
+        assert!(doc.selection.is_none());
+        clear.revert(&mut doc);
+        assert_eq!(doc, with_sel);
     }
 
     #[test]

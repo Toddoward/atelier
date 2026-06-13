@@ -6,7 +6,7 @@ spec's Verification Log). Do not start phase N+1 with phase N red.
 
 Status legend: ☐ not started · ◐ in progress · ☑ done
 
-Specs written so far: Phase 0 → 0001 ☑ · Phase 1 → 0002 ☑ · Phase 2 → 0003 ☑ (tiles/CPU compositor) + 0004 ☑ (GPU parity) + 0005 ☑ (brush/move/resize). Phase 2 remainder before its gate closes: free transform, crop tool, resample, tablet pressure, GPU-canvas wiring + dirty-rect (60 fps gate item).
+Specs written so far: Phase 0 → 0001 ☑ · Phase 1 → 0002 ☑ · Phase 2 → 0003 ☑ + 0004 ☑ + 0005 ☑ + 0006 ☑ (gate met). Phase 3 → 0007 ☑ (selection model + marquee/ellipse/lasso, slice a). Phase 3 remaining slices: (b) selection-clipped paint + destructive adjustments, (c) adjustment layers, (d) free transform/crop/resample (moved from Phase 2 per D-12), plus magic wand + feather/grow/invert.
 
 | # | Phase | Contents (req IDs) | Verify gate | Status |
 |---|-------|--------------------|-------------|--------|

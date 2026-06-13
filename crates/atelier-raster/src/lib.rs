@@ -7,6 +7,7 @@ pub mod blend;
 pub mod brush;
 pub mod compositor;
 pub mod ops;
+pub mod selection;
 
 pub use blend::{blend_rgb, dissolve_keeps};
 pub use brush::{segment_tiles, stamp_segment, BrushParams};

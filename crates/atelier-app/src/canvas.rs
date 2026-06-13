@@ -2,12 +2,13 @@
 //! document as a nearest-filtered texture, recomposited when the history
 //! revision changes (spec 0004).
 
-use crate::{ActiveTool, EditorState, StrokeState};
-use atelier_core::command::{PaintTiles, SetOffset};
-use atelier_core::{NodeId, NodeKind};
+use crate::{ActiveTool, EditorState, SelectDrag, StrokeState};
+use atelier_core::command::{PaintTiles, SetOffset, SetSelection};
+use atelier_core::{CombineOp, NodeId, NodeKind};
 use atelier_gpu::{CheckerParams, CheckerboardRenderer, Viewport};
-use atelier_raster::BrushParams;
+use atelier_raster::{selection, BrushParams};
 use eframe::egui_wgpu::{self, wgpu};
+use std::sync::Arc;
 
 pub fn canvas_ui(ui: &mut egui::Ui, viewport: &mut Viewport, state: Option<&mut EditorState>) {
     let (rect, response) =
@@ -114,7 +115,6 @@ fn handle_tools(
     vp: &Viewport,
     state: &mut EditorState,
 ) {
-    let _ = ui;
     let pointer_doc = |pos: egui::Pos2| {
         vp.screen_to_doc([pos.x - rect.min.x, pos.y - rect.min.y])
     };
@@ -189,7 +189,78 @@ fn handle_tools(
                 }
             }
         }
+        ActiveTool::SelectRect | ActiveTool::SelectEllipse | ActiveTool::Lasso => {
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                // `press_origin` is where the button went down; by drag-start the
+                // live pointer has already moved, so `interact_pointer_pos` would
+                // collapse start onto current.
+                let origin = ui
+                    .input(|i| i.pointer.press_origin())
+                    .or_else(|| response.interact_pointer_pos());
+                if let Some(pos) = origin {
+                    let doc = pointer_doc(pos);
+                    state.select_drag =
+                        Some(SelectDrag { start: doc, current: doc, points: vec![doc] });
+                }
+            }
+            if response.dragged_by(egui::PointerButton::Primary) {
+                let latest = response.interact_pointer_pos();
+                if let (Some(drag), Some(pos)) = (&mut state.select_drag, latest) {
+                    let doc = pointer_doc(pos);
+                    drag.current = doc;
+                    // Lasso: only record meaningfully spaced points.
+                    let last = drag.points.last().copied().unwrap_or(doc);
+                    if (doc[0] - last[0]).abs() + (doc[1] - last[1]).abs() > 1.0 {
+                        drag.points.push(doc);
+                    }
+                }
+            }
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                if let Some(drag) = state.select_drag.take() {
+                    finish_selection(ui, state, drag);
+                }
+            }
+        }
     }
+}
+
+/// Build the shape mask, combine per modifiers, push the undoable command.
+fn finish_selection(ui: &egui::Ui, state: &mut EditorState, drag: SelectDrag) {
+    let (s, c) = (drag.start, drag.current);
+    let (shape, label) = match state.tool {
+        ActiveTool::SelectRect => {
+            (selection::rect_mask(s[0], s[1], c[0], c[1]), "Rectangular Select")
+        }
+        ActiveTool::SelectEllipse => {
+            (selection::ellipse_mask(s[0], s[1], c[0], c[1]), "Elliptical Select")
+        }
+        ActiveTool::Lasso => (selection::polygon_mask(&drag.points), "Lasso Select"),
+        _ => return,
+    };
+
+    let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
+    let op = match (shift, alt) {
+        (true, true) => CombineOp::Intersect,
+        (true, false) => CombineOp::Add,
+        (false, true) => CombineOp::Subtract,
+        (false, false) => CombineOp::Replace,
+    };
+
+    let combined = match (&state.editor.doc.selection, op) {
+        (Some(current), op) if op != CombineOp::Replace => {
+            let mut m = (**current).clone();
+            m.combine(&shape, op);
+            m
+        }
+        _ => shape,
+    };
+    let new = (!combined.is_empty()).then(|| Arc::new(combined));
+    // Replace with an empty drag = no-op rather than an accidental deselect.
+    if new.is_none() && state.editor.doc.selection.is_none() {
+        return;
+    }
+    let cmd = SetSelection::new(&state.editor.doc, new, label);
+    state.editor.apply(Box::new(cmd));
 }
 
 /// Mutable access to a raster layer's tiles (live-stroke path; the committed
@@ -289,6 +360,53 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
         egui::Stroke::new(1.0, egui::Color32::from_gray(200)),
         egui::StrokeKind::Outside,
     );
+
+    // Selection: marching ants (cached per revision) + live drag preview.
+    if let Some(mask) = &state.editor.doc.selection {
+        let rev = state.editor.history.revision();
+        if state.ants.as_ref().is_none_or(|(r, _)| *r != rev) {
+            state.ants = Some((rev, selection::boundary_segments(mask)));
+        }
+        if let Some((_, segs)) = &state.ants {
+            let to_screen = |p: [f32; 2]| {
+                let s = vp.doc_to_screen(p);
+                rect.min + egui::vec2(s[0], s[1])
+            };
+            for (a, b) in segs {
+                let (pa, pb) = (to_screen(*a), to_screen(*b));
+                painter.line_segment([pa, pb], egui::Stroke::new(2.0, egui::Color32::BLACK));
+                painter.line_segment([pa, pb], egui::Stroke::new(1.0, egui::Color32::WHITE));
+            }
+        }
+    } else {
+        state.ants = None;
+    }
+    if let Some(drag) = &state.select_drag {
+        let to_screen = |p: [f32; 2]| {
+            let s = vp.doc_to_screen(p);
+            rect.min + egui::vec2(s[0], s[1])
+        };
+        let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(230));
+        match state.tool {
+            ActiveTool::SelectRect | ActiveTool::SelectEllipse => {
+                let r = egui::Rect::from_two_pos(to_screen(drag.start), to_screen(drag.current));
+                if state.tool == ActiveTool::SelectRect {
+                    painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Middle);
+                } else {
+                    painter.add(egui::Shape::ellipse_stroke(
+                        r.center(),
+                        r.size() * 0.5,
+                        stroke,
+                    ));
+                }
+            }
+            ActiveTool::Lasso => {
+                let pts: Vec<egui::Pos2> = drag.points.iter().map(|&p| to_screen(p)).collect();
+                painter.add(egui::Shape::line(pts, stroke));
+            }
+            _ => {}
+        }
+    }
 
     // Selected raster layer: coarse tile-bounds outline.
     if let Some(node) = state.editor.selection.and_then(|id| state.editor.doc.node(id)) {
