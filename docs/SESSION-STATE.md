@@ -3,7 +3,25 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-w (spec 0029 — cross-layer align/distribute DONE)
+## Last session: 2026-06-13-x (spec 0030 — copy/paste layers DONE)
+
+### Done
+- **Spec 0030 ☑** — copy/paste layers: `EditorState.clipboard` (source NodeId); `paste_layer`
+  deep-clones fresh each time (clone_subtree + InsertSubtree) above the selection; Ctrl+C/V +
+  Edit menu. Independent copies, stale-source no-op. app 34 tests green, clippy clean, smoke.
+
+### Next
+1. **Boolean path ops** (VEC-5) — the last big vector item; NEW `i_overlay` dep, read its API
+   first. Persistent deferred new-dep task.
+2. **Phase 5** — place image (INT-3: needs `image` decode + rfd file dialog), smart objects
+   (DOC-5), z-interleaved raster+vector compositing (vectors currently overlay).
+3. Group-as-unit move in cross-layer align; OS-clipboard / cross-doc paste.
+
+### Watch out (additions)
+- Clipboard stores a source NodeId and re-clones per paste (fresh ids) — copies independent;
+  deleted source → paste no-ops.
+
+## Previous session: 2026-06-13-w (spec 0029 — cross-layer align/distribute DONE)
 
 ### Done
 - **Spec 0029 ☑** — multi-object VEC-6: `panels::align_layers` / `distribute_layers` align or

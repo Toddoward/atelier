@@ -138,6 +138,9 @@ pub struct EditorState {
     /// Additional selected nodes beyond `editor.selection` (shift-click in the
     /// Layers panel) — enables Group of multiple layers (spec 0028).
     pub selected_extra: Vec<NodeId>,
+    /// Copy/paste source node (same document). Paste deep-clones it fresh each
+    /// time (spec 0030).
+    pub clipboard: Option<NodeId>,
     /// In-progress pen path anchors in doc space (spec 0016).
     pub pen_points: Vec<[f32; 2]>,
     /// Active direct-select anchor drag: (shape index, anchor index) (spec 0017).
@@ -292,6 +295,7 @@ impl AtelierApp {
                     vector_cache: None,
                     pending_shape: None,
                     selected_extra: Vec::new(),
+                    clipboard: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
                     selected_anchor: None,
@@ -498,6 +502,37 @@ impl AtelierApp {
             st.editor.selection = None;
             st.selected_extra.clear();
         }
+    }
+
+    /// Copy the selected layer (remembers the source node for paste).
+    fn copy_selected_layer(&mut self) {
+        if let Some(st) = &mut self.state {
+            st.clipboard = st.editor.selection;
+        }
+    }
+
+    /// Paste a fresh deep copy of the clipboard layer above the selection.
+    fn paste_layer(&mut self) {
+        let Some(st) = &mut self.state else { return };
+        let Some(src) = st.clipboard else { return };
+        if st.editor.doc.node(src).is_none() {
+            return; // source gone
+        }
+        let doc = &st.editor.doc;
+        let (parent, index) = match st.editor.selection.and_then(|s| doc.node(s).map(|n| (s, n))) {
+            Some((sel, n)) => {
+                let parent = n.parent.unwrap_or(doc.root());
+                let index = doc.children(parent).iter().position(|&c| c == sel).unwrap_or(0);
+                (parent, index)
+            }
+            None => (doc.root(), 0),
+        };
+        let Some((root, nodes)) = st.editor.doc.clone_subtree(src, parent) else { return };
+        let cmd =
+            atelier_core::command::InsertSubtree::new(root, nodes, parent, index, "Paste Layer");
+        st.editor.apply(Box::new(cmd));
+        st.editor.selection = Some(root);
+        st.selected_extra.clear();
     }
 
     /// Duplicate the selected layer (deep copy with fresh ids) above itself.
@@ -711,6 +746,14 @@ impl AtelierApp {
             let dup = KeyboardShortcut::new(CMD, Key::J);
             if ctx.input_mut(|i| i.consume_shortcut(&dup)) {
                 self.duplicate_selected_layer();
+            }
+            let copy = KeyboardShortcut::new(CMD, Key::C);
+            if ctx.input_mut(|i| i.consume_shortcut(&copy)) {
+                self.copy_selected_layer();
+            }
+            let paste = KeyboardShortcut::new(CMD, Key::V);
+            if ctx.input_mut(|i| i.consume_shortcut(&paste)) {
+                self.paste_layer();
             }
             let ungroup = KeyboardShortcut::new(CMD.plus(Modifiers::SHIFT), Key::G);
             let group = KeyboardShortcut::new(CMD, Key::G);
@@ -986,6 +1029,18 @@ impl AtelierApp {
                         }
                         ui.close_menu();
                     }
+                    ui.separator();
+                    let has_sel = self.state.as_ref().is_some_and(|s| s.editor.selection.is_some());
+                    let has_clip = self.state.as_ref().is_some_and(|s| s.clipboard.is_some());
+                    if ui.add_enabled(has_sel, egui::Button::new("Copy Layer\t(Ctrl+C)")).clicked() {
+                        self.copy_selected_layer();
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(has_clip, egui::Button::new("Paste Layer\t(Ctrl+V)")).clicked()
+                    {
+                        self.paste_layer();
+                        ui.close_menu();
+                    }
                 });
             });
         });
@@ -1040,6 +1095,7 @@ impl AtelierApp {
                     vector_cache: None,
                     pending_shape: None,
                     selected_extra: Vec::new(),
+                    clipboard: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
                     selected_anchor: None,
@@ -1897,6 +1953,42 @@ mod ui_tests {
         }
         h.run();
         h.run();
+    }
+
+    /// Spec 0030: copy a layer and paste a fresh independent copy; undo removes.
+    #[test]
+    fn copy_paste_layer_and_undo() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let src = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+
+        h.state_mut().copy_selected_layer();
+        h.state_mut().paste_layer();
+        h.run();
+        let st = h.state().state.as_ref().unwrap();
+        assert_eq!(st.editor.doc.node_count(), n0 + 1, "paste added a layer");
+        let pasted = st.editor.selection.unwrap();
+        assert_ne!(pasted, src, "paste is a fresh node");
+        assert!(st.editor.doc.node(src).is_some(), "source intact");
+
+        // Paste again → second independent copy.
+        h.state_mut().paste_layer();
+        h.run();
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0 + 2,
+            "second paste is independent"
+        );
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0,
+            "undo removed both pastes"
+        );
     }
 
     /// Spec 0029: align two raster layers to each other (left); undo restores.
