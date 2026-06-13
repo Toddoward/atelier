@@ -3,7 +3,33 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-f (spec 0012 — Phase 4 STARTED, slice a DONE)
+## Last session: 2026-06-13-g (spec 0013 — Phase 4 slice b DONE)
+
+### Done
+- **Spec 0013 ☑** — vector layers now render on the canvas: each visible vector layer's
+  shapes are tessellated (cached by history revision in `EditorState.vector_cache`), mapped
+  to screen by the viewport, and painted as `egui::epaint::Mesh` above the raster composite,
+  below the selection ants. Layer opacity scales vertex alpha. Rendered through egui's wgpu
+  mesh path (keeps "only atelier-gpu imports wgpu"); a bespoke GPU pipeline is a later perf
+  option. Full suite green (app 22 tests), clippy clean.
+- ROADMAP Phase 4 = ◐ (slices a+b done).
+
+### Next — Phase 4 continues
+1. **Spec 0014 (slice c)** — authoring tools: pen (add/move/convert anchors), shape tools
+   (rect/ellipse/polygon/star/line), direct-select; commands to create `NodeKind::Vector`
+   layers and edit shapes. No vector-authoring UI exists yet — layers are only constructed
+   in tests/fixtures so far.
+2. Booleans (i_overlay: unite/subtract/intersect/exclude), align/distribute, compound paths.
+3. Phase 5 — focus modes & raster↔vector interop (incl. true z-interleaving of raster +
+   vector in one compositor; today vectors are an overlay above the raster composite).
+
+### Watch out (additions)
+- Vector render is an egui-mesh OVERLAY above the raster composite — NOT z-interleaved with
+  raster layers yet (Phase 5). `vector_cache` rebuilds on revision change only.
+- Tessellation is in doc space; extreme zoom can facet (re-tessellation at screen scale
+  deferred).
+
+## Previous session: 2026-06-13-f (spec 0012 — Phase 4 STARTED, slice a DONE)
 
 ### Done
 - **Spec 0012 ☑** — vector engine slice a: `atelier-vector` crate (pure: serde+lyon+kurbo,

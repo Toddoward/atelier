@@ -93,6 +93,9 @@ pub struct EditorState {
     /// Pending magic-wand click (doc pixel, shift, alt) — drained by the app
     /// loop into `magic_wand_at` (canvas can't borrow the app helper).
     pub wand_click: Option<([i32; 2], bool, bool)>,
+    /// Tessellated vector-layer meshes (doc space), cached by history revision
+    /// (spec 0013). Re-tessellate only on document change.
+    pub vector_cache: Option<(u64, Vec<(NodeId, atelier_core::atelier_vector::Mesh)>)>,
 }
 
 /// Doc-space unit segments outlining the selection boundary.
@@ -236,6 +239,7 @@ impl AtelierApp {
                     select_drag: None,
                     ants: None,
                     wand_click: None,
+                    vector_cache: None,
                 });
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -788,6 +792,7 @@ impl AtelierApp {
                     select_drag: None,
                     ants: None,
                     wand_click: None,
+                    vector_cache: None,
             });
             self.viewport = Viewport::default();
         } else if cancel {
@@ -1624,7 +1629,43 @@ mod ui_tests {
     }
 
     /// Spec 0008: Invert via menu mutates the selected layer's pixels + undoable.
-    /// Spec 0009: adding an adjustment layer recomposites the canvas; undo reverts.
+    /// Spec 0013: a vector layer tessellates into a cached, non-empty mesh that
+    /// invalidates on revision change.
+    #[test]
+    fn vector_layer_tessellates_and_caches() {
+        use atelier_core::atelier_vector::{Path, Shape};
+        use atelier_core::VectorContent;
+        let mut h = harness();
+        create_doc(&mut h);
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let content = VectorContent {
+                shapes: vec![Shape::filled(Path::rect(4.0, 4.0, 20.0, 20.0), [0.0, 0.7, 0.9, 1.0])],
+            };
+            let cmd = atelier_core::command::AddNode::new(
+                &mut st.editor.doc,
+                atelier_core::Node::new(
+                    atelier_core::LayerProps::named("vec"),
+                    atelier_core::NodeKind::Vector(content),
+                ),
+                root,
+                0,
+            );
+            st.editor.apply(Box::new(cmd));
+        }
+        h.run();
+
+        let (rev, layers) = h.state().state.as_ref().unwrap().vector_cache.clone().unwrap();
+        assert_eq!(layers.len(), 1, "one vector layer cached");
+        assert!(!layers[0].1.is_empty(), "tessellated to triangles");
+
+        click_label(&mut h, "+ Layer");
+        h.run();
+        let rev2 = h.state().state.as_ref().unwrap().vector_cache.as_ref().unwrap().0;
+        assert_ne!(rev, rev2, "cache invalidated on revision change");
+    }
+
     /// Spec 0010: numeric transform bakes the layer; undo restores exactly.
     #[test]
     fn transform_layer_scales_and_undoes() {
