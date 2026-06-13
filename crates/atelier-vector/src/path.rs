@@ -99,6 +99,43 @@ impl Path {
         b.build()
     }
 
+    /// Regular `sides`-gon inscribed in radius `r`, first vertex pointing up.
+    pub fn polygon(cx: f32, cy: f32, r: f32, sides: u32) -> Path {
+        let sides = sides.max(3);
+        let mut b = PathBuilder::new();
+        for i in 0..sides {
+            let a = -std::f32::consts::FRAC_PI_2
+                + i as f32 * std::f32::consts::TAU / sides as f32;
+            let p = [cx + r * a.cos(), cy + r * a.sin()];
+            if i == 0 {
+                b.move_to(p);
+            } else {
+                b.line_to(p);
+            }
+        }
+        b.close();
+        b.build()
+    }
+
+    /// `points`-pointed star alternating between `r_outer` and `r_inner`.
+    pub fn star(cx: f32, cy: f32, r_outer: f32, r_inner: f32, points: u32) -> Path {
+        let points = points.max(3);
+        let mut b = PathBuilder::new();
+        for i in 0..points * 2 {
+            let r = if i % 2 == 0 { r_outer } else { r_inner };
+            let a = -std::f32::consts::FRAC_PI_2
+                + i as f32 * std::f32::consts::PI / points as f32;
+            let p = [cx + r * a.cos(), cy + r * a.sin()];
+            if i == 0 {
+                b.move_to(p);
+            } else {
+                b.line_to(p);
+            }
+        }
+        b.close();
+        b.build()
+    }
+
     /// Ellipse inscribed in the rect, via 4 cubic arcs (kappa approximation).
     pub fn ellipse(cx: f32, cy: f32, rx: f32, ry: f32) -> Path {
         const K: f32 = 0.552_285; // 4/3 * (sqrt(2)-1), kappa
@@ -153,6 +190,28 @@ mod tests {
         let b = p.bounds().unwrap();
         assert!((b[0] - 30.0).abs() < 1e-3 && (b[2] - 70.0).abs() < 1e-3);
         assert!((b[1] - 40.0).abs() < 1e-3 && (b[3] - 60.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn polygon_has_n_vertices_and_fits_radius() {
+        let p = Path::polygon(0.0, 0.0, 10.0, 6);
+        assert!(p.subpaths[0].closed);
+        // move_to start + 5 line segs = 6 vertices for a hexagon.
+        assert_eq!(p.subpaths[0].segs.len(), 5);
+        let b = p.bounds().unwrap();
+        assert!(b[0] >= -10.001 && b[2] <= 10.001, "within radius: {b:?}");
+        // First vertex points up.
+        assert!((p.subpaths[0].start[1] + 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn star_alternates_radii() {
+        let p = Path::star(0.0, 0.0, 10.0, 4.0, 5);
+        assert!(p.subpaths[0].closed);
+        // 5-point star = 10 vertices = move_to + 9 line segs.
+        assert_eq!(p.subpaths[0].segs.len(), 9);
+        let b = p.bounds().unwrap();
+        assert!((b[3]).abs() <= 10.001 && (b[1]) >= -10.001);
     }
 
     #[test]

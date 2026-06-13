@@ -25,6 +25,8 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         (ActiveTool::MagicWand, "Magic Wand (W)"),
         (ActiveTool::ShapeRect, "Rectangle (U)"),
         (ActiveTool::ShapeEllipse, "Ellipse"),
+        (ActiveTool::ShapePolygon, "Polygon"),
+        (ActiveTool::ShapeStar, "Star"),
     ] {
         if ui.selectable_label(state.tool == tool, label).clicked() {
             state.tool = tool;
@@ -35,7 +37,7 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         ui.label("Tolerance");
         ui.add(egui::Slider::new(&mut state.brush.wand_tolerance, 0..=128));
     }
-    if matches!(state.tool, ActiveTool::ShapeRect | ActiveTool::ShapeEllipse) {
+    if state.tool.shape_kind().is_some() {
         ui.separator();
         ui.label("Fill");
         let mut rgba = egui::Rgba::from_rgba_unmultiplied(

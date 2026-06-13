@@ -236,7 +236,10 @@ fn handle_tools(
                 }
             }
         }
-        ActiveTool::ShapeRect | ActiveTool::ShapeEllipse => {
+        ActiveTool::ShapeRect
+        | ActiveTool::ShapeEllipse
+        | ActiveTool::ShapePolygon
+        | ActiveTool::ShapeStar => {
             // Rubber-band a shape (reuses select_drag for the live preview).
             if response.drag_started_by(egui::PointerButton::Primary) {
                 let origin = ui
@@ -262,8 +265,9 @@ fn handle_tools(
                     let max =
                         [drag.start[0].max(drag.current[0]), drag.start[1].max(drag.current[1])];
                     if max[0] - min[0] >= 1.0 && max[1] - min[1] >= 1.0 {
-                        let ellipse = state.tool == ActiveTool::ShapeEllipse;
-                        state.pending_shape = Some((ellipse, min, max));
+                        if let Some(kind) = state.tool.shape_kind() {
+                            state.pending_shape = Some((kind, min, max));
+                        }
                     }
                 }
             }
@@ -440,7 +444,11 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
         };
         let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(230));
         match state.tool {
-            ActiveTool::SelectRect | ActiveTool::ShapeRect => {
+            ActiveTool::SelectRect
+            | ActiveTool::ShapeRect
+            | ActiveTool::ShapePolygon
+            | ActiveTool::ShapeStar => {
+                // Polygon/star preview as their bounding box (cheap rubber band).
                 let r = egui::Rect::from_two_pos(to_screen(drag.start), to_screen(drag.current));
                 painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Middle);
             }

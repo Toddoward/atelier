@@ -7,7 +7,7 @@ spec's Verification Log). Do not start phase N+1 with phase N red.
 Status legend: ☐ not started · ◐ in progress · ☑ done
 
 Specs written so far: Phase 0 → 0001 ☑ · Phase 1 → 0002 ☑ · Phase 2 → 0003 ☑ + 0004 ☑ + 0005 ☑ + 0006 ☑ (gate met). Phase 3 → 0007 ☑ + 0008 ☑ + 0009 ☑ + 0010 ☑ + 0011 ☑ — **Phase 3 complete**. Deferred: quick-mask, interactive transform handles, magnetic lasso, refine-edge.
-Phase 4 → 0012 ☑ (path model + tessellation) + 0013 ☑ (canvas render) + 0014 ☑ (shape tools: rect/ellipse insertion). Next: 0015 pen tool + anchor/direct-select editing + polygon/star/line; then booleans (i_overlay) + align/distribute + compound paths.
+Phase 4 → 0012 ☑ (path model + tessellation) + 0013 ☑ (canvas render) + 0014 ☑ (rect/ellipse tools) + 0015 ☑ (polygon/star tools). Next: 0016 pen tool + anchor/direct-select editing (+ line/open-path once stroke render exists); then booleans (i_overlay) + align/distribute + compound paths.
 
 | # | Phase | Contents (req IDs) | Verify gate | Status |
 |---|-------|--------------------|-------------|--------|

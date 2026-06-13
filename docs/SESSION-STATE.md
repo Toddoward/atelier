@@ -3,7 +3,31 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-h (spec 0014 — Phase 4 slice c1 DONE)
+## Last session: 2026-06-13-i (specs 0014 + 0015 — Phase 4 shape tools DONE)
+
+### Done
+- **Spec 0014 ☑** — Rectangle (U) + Ellipse shape tools (rubber-band drag → filled vector
+  layer, undoable via AddNode, live-rendered). First vector authoring.
+- **Spec 0015 ☑** — Polygon + Star tools; added `Path::polygon`/`Path::star`; generalized the
+  shape pipeline to `ShapeKind { Rect, Ellipse, Polygon, Star }` + `ActiveTool::shape_kind()`.
+  Tools panel has all four + shared vector-fill picker. app 23 / core 35 / vector tests green,
+  clippy clean, smoke clean. Both committed (0014 = 164b63c; 0015 pending this commit).
+- ROADMAP Phase 4 = ◐ (slices a,b,c1,c1b done).
+
+### Next — Phase 4 continues
+1. **Spec 0016** — pen tool (click-add anchors, drag bezier handles) + direct-select
+   (move anchors/handles) + line/open-path. Needs an edit-path command + on-canvas anchor
+   hit-testing. Editing existing shape geometry still doesn't exist — only whole-shape insert.
+2. Booleans (i_overlay), align/distribute, compound paths.
+3. Phase 5 — focus modes & raster↔vector interop (z-interleaving; vectors currently overlay).
+
+### Watch out (additions)
+- Shape pipeline: drag → `pending_shape: Option<(ShapeKind,min,max)>` → drained in `ui()`
+  after `DockArea::show` → `add_shape_layer`. Add a new primitive = new `ShapeKind` variant +
+  `shape_kind()` arm + `add_shape_layer` match arm + panel entry.
+- Polygon sides (6) and star points (5) are fixed; configurable UI deferred.
+
+## Previous session: 2026-06-13-h (spec 0014 — Phase 4 slice c1 DONE)
 
 ### Done
 - **Spec 0014 ☑** — shape tools: Rectangle (U) + Ellipse tools rubber-band a shape on the

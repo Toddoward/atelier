@@ -47,6 +47,30 @@ pub enum ActiveTool {
     MagicWand,
     ShapeRect,
     ShapeEllipse,
+    ShapePolygon,
+    ShapeStar,
+}
+
+/// Which primitive a shape-tool drag produces (spec 0014/0015).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeKind {
+    Rect,
+    Ellipse,
+    Polygon,
+    Star,
+}
+
+impl ActiveTool {
+    /// The shape primitive for a shape tool, if this is one.
+    pub fn shape_kind(self) -> Option<ShapeKind> {
+        match self {
+            ActiveTool::ShapeRect => Some(ShapeKind::Rect),
+            ActiveTool::ShapeEllipse => Some(ShapeKind::Ellipse),
+            ActiveTool::ShapePolygon => Some(ShapeKind::Polygon),
+            ActiveTool::ShapeStar => Some(ShapeKind::Star),
+            _ => None,
+        }
+    }
 }
 
 /// Brush/eraser options (Tools panel).
@@ -106,9 +130,9 @@ pub struct EditorState {
     /// Tessellated vector-layer meshes (doc space), cached by history revision
     /// (spec 0013). Re-tessellate only on document change.
     pub vector_cache: Option<(u64, Vec<(NodeId, atelier_core::atelier_vector::Mesh)>)>,
-    /// Pending shape insertion (is_ellipse, doc min, doc max) from a shape-tool
-    /// drag — drained by the app loop into `add_shape_layer` (spec 0014).
-    pub pending_shape: Option<(bool, [f32; 2], [f32; 2])>,
+    /// Pending shape insertion (kind, doc min, doc max) from a shape-tool drag
+    /// — drained by the app loop into `add_shape_layer` (spec 0014/0015).
+    pub pending_shape: Option<(ShapeKind, [f32; 2], [f32; 2])>,
 }
 
 /// Doc-space unit segments outlining the selection boundary.
@@ -434,8 +458,8 @@ impl AtelierApp {
     }
 
     /// Insert a filled vector shape layer from a doc-space bounding box
-    /// (spec 0014). `ellipse` chooses ellipse vs rectangle.
-    fn add_shape_layer(&mut self, ellipse: bool, min: [f32; 2], max: [f32; 2]) {
+    /// (spec 0014/0015).
+    fn add_shape_layer(&mut self, kind: ShapeKind, min: [f32; 2], max: [f32; 2]) {
         use atelier_core::atelier_vector::{Path, Shape};
         use atelier_core::{LayerProps, Node, NodeKind, VectorContent};
         let Some(st) = &mut self.state else { return };
@@ -443,14 +467,16 @@ impl AtelierApp {
         if w < 1.0 || h < 1.0 {
             return;
         }
-        let path = if ellipse {
-            Path::ellipse(min[0] + w * 0.5, min[1] + h * 0.5, w * 0.5, h * 0.5)
-        } else {
-            Path::rect(min[0], min[1], w, h)
+        let (cx, cy) = (min[0] + w * 0.5, min[1] + h * 0.5);
+        let r = (w.min(h)) * 0.5;
+        let (path, name) = match kind {
+            ShapeKind::Rect => (Path::rect(min[0], min[1], w, h), "Rectangle"),
+            ShapeKind::Ellipse => (Path::ellipse(cx, cy, w * 0.5, h * 0.5), "Ellipse"),
+            ShapeKind::Polygon => (Path::polygon(cx, cy, r, 6), "Polygon"),
+            ShapeKind::Star => (Path::star(cx, cy, r, r * 0.5, 5), "Star"),
         };
         let content =
             VectorContent { shapes: vec![Shape::filled(path, st.brush.vector_fill)] };
-        let name = if ellipse { "Ellipse" } else { "Rectangle" };
 
         let doc = &st.editor.doc;
         let (parent, index) = match st.editor.selection.and_then(|s| doc.node(s).map(|n| (s, n))) {
@@ -1103,9 +1129,8 @@ impl AtelierApp {
             self.magic_wand_at(doc, shift, alt);
         }
         // Drain a queued shape-tool drag into a new vector layer (spec 0014).
-        if let Some((ellipse, min, max)) = self.state.as_mut().and_then(|s| s.pending_shape.take())
-        {
-            self.add_shape_layer(ellipse, min, max);
+        if let Some((kind, min, max)) = self.state.as_mut().and_then(|s| s.pending_shape.take()) {
+            self.add_shape_layer(kind, min, max);
         }
 
         self.sync_title(ctx);
@@ -1693,9 +1718,12 @@ mod ui_tests {
     /// Spec 0014: a shape-tool drag inserts one vector layer; undo removes it.
     #[test]
     fn shape_tool_drag_inserts_vector_layer_and_undoes() {
-        for (ellipse, tool) in
-            [(false, ActiveTool::ShapeRect), (true, ActiveTool::ShapeEllipse)]
-        {
+        for tool in [
+            ActiveTool::ShapeRect,
+            ActiveTool::ShapeEllipse,
+            ActiveTool::ShapePolygon,
+            ActiveTool::ShapeStar,
+        ] {
             let mut h = harness();
             create_doc(&mut h);
             h.state_mut().state.as_mut().unwrap().tool = tool;
@@ -1709,7 +1737,7 @@ mod ui_tests {
             assert_eq!(
                 st.editor.doc.node_count(),
                 n0 + 1,
-                "shape drag added one layer (ellipse={ellipse})"
+                "shape drag added one layer (tool={tool:?})"
             );
             let id = st.editor.selection.expect("new shape selected");
             match &st.editor.doc.node(id).unwrap().kind {
