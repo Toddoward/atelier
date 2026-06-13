@@ -3,7 +3,26 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-t (spec 0026 — align/distribute shapes DONE)
+## Last session: 2026-06-13-u (spec 0027 — duplicate layer DONE)
+
+### Done
+- **Spec 0027 ☑** — `Document::clone_subtree` (deep copy w/ fresh ids) + `InsertSubtree`
+  command; `duplicate_selected_layer` (Ctrl+J / Layer menu) copies the selected layer/group
+  above itself, undoable, selects the copy. core / app 31 tests green, clippy clean, smoke.
+- `InsertSubtree` is a reusable building block for future paste / drag-duplicate / place.
+
+### Next
+1. **Spec 0028 — boolean path ops** (VEC-5): unite/subtract/intersect/exclude. NEW
+   `i_overlay` workspace dep — read its API first. The persistent deferred new-dep task.
+2. **Node multi-select** (selection → set) → cross-layer align/distribute, group/ungroup of
+   multiple, copy/paste layers (reuse InsertSubtree). Sizable; plan carefully.
+3. Phase 5 — place image (INT-3), smart objects, z-interleaved raster+vector compositing.
+
+### Watch out (additions)
+- `clone_subtree` allocates fresh ids from the doc counter; safe for nested groups.
+  `InsertSubtree` apply=restore_subtree(clone), revert=remove_subtree(root).
+
+## Previous session: 2026-06-13-t (spec 0026 — align/distribute shapes DONE)
 
 ### Done
 - **Spec 0026 ☑** — `panels::align_shapes_in_layer` (L/C/R/T/M/B vs union bounds) +

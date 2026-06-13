@@ -450,6 +450,25 @@ impl AtelierApp {
         st.editor.apply(Box::new(cmd));
     }
 
+    /// Duplicate the selected layer (deep copy with fresh ids) above itself.
+    fn duplicate_selected_layer(&mut self) {
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let doc = &st.editor.doc;
+        let parent = doc.node(id).and_then(|n| n.parent).unwrap_or(doc.root());
+        let index = doc.children(parent).iter().position(|&c| c == id).unwrap_or(0);
+        let Some((root, nodes)) = st.editor.doc.clone_subtree(id, parent) else { return };
+        let cmd = atelier_core::command::InsertSubtree::new(
+            root,
+            nodes,
+            parent,
+            index,
+            "Duplicate Layer",
+        );
+        st.editor.apply(Box::new(cmd));
+        st.editor.selection = Some(root);
+    }
+
     /// Rasterize the selected vector layer into a raster layer (INT-2).
     fn rasterize_selected_layer(&mut self) {
         use atelier_core::{NodeKind, RasterContent};
@@ -639,6 +658,10 @@ impl AtelierApp {
                     Some(atelier_core::Mask::select_all(size))
                 });
             }
+            let dup = KeyboardShortcut::new(CMD, Key::J);
+            if ctx.input_mut(|i| i.consume_shortcut(&dup)) {
+                self.duplicate_selected_layer();
+            }
         }
 
         // Deselect (Ctrl+D).
@@ -753,6 +776,17 @@ impl AtelierApp {
                 ui.menu_button("Layer", |ui| {
                     use atelier_raster::Adjustment;
                     let has = self.state.is_some();
+                    let has_sel = self
+                        .state
+                        .as_ref()
+                        .is_some_and(|s| s.editor.selection.is_some());
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new("Duplicate Layer\t(Ctrl+J)"))
+                        .clicked()
+                    {
+                        self.duplicate_selected_layer();
+                        ui.close_menu();
+                    }
                     if ui.add_enabled(has, egui::Button::new("Transform…")).clicked() {
                         self.transform_dialog = Some([100.0, 100.0, 0.0]);
                         ui.close_menu();
@@ -1785,6 +1819,31 @@ mod ui_tests {
         }
         h.run();
         h.run();
+    }
+
+    /// Spec 0027: duplicate the selected layer; undo removes the copy.
+    #[test]
+    fn duplicate_layer_and_undo() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let orig = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+
+        h.state_mut().duplicate_selected_layer();
+        h.run();
+        let st = h.state().state.as_ref().unwrap();
+        assert_eq!(st.editor.doc.node_count(), n0 + 1, "one layer added");
+        let new_sel = st.editor.selection.unwrap();
+        assert_ne!(new_sel, orig, "selection moved to the duplicate");
+        assert!(st.editor.doc.node(orig).is_some(), "original still present");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0,
+            "undo removed the duplicate"
+        );
     }
 
     /// Spec 0026: align + distribute shapes within a vector layer.

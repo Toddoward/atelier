@@ -181,6 +181,39 @@ impl Document {
         Ok(())
     }
 
+    /// Deep-clone the subtree rooted at `id` with fresh NodeIds, re-parented
+    /// under `new_parent`. Returns `(new_root, nodes)` ready for
+    /// [`restore_subtree`] (root first, links remapped). Spec 0027.
+    pub fn clone_subtree(
+        &mut self,
+        id: NodeId,
+        new_parent: NodeId,
+    ) -> Option<(NodeId, Vec<(NodeId, Node)>)> {
+        self.nodes.get(&id)?;
+        // DFS, root first.
+        let mut old_order = Vec::new();
+        let mut stack = vec![id];
+        while let Some(c) = stack.pop() {
+            old_order.push(c);
+            if let Some(n) = self.nodes.get(&c) {
+                stack.extend(n.children.iter().copied());
+            }
+        }
+        let mut map: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+        for &old in &old_order {
+            let fresh = self.alloc_id();
+            map.insert(old, fresh);
+        }
+        let mut out = Vec::with_capacity(old_order.len());
+        for &old in &old_order {
+            let mut n = self.nodes.get(&old).expect("subtree node").clone();
+            n.parent = if old == id { Some(new_parent) } else { n.parent.map(|p| map[&p]) };
+            n.children = n.children.iter().map(|c| map[c]).collect();
+            out.push((map[&old], n));
+        }
+        Some((map[&id], out))
+    }
+
     /// Move `id` to `new_parent` at `new_index`. Returns the old `(parent, index)`.
     pub fn move_node(
         &mut self,

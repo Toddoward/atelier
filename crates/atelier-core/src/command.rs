@@ -572,6 +572,45 @@ impl Command for SetVectorShapes {
     }
 }
 
+/// Insert a pre-built subtree (e.g. a duplicated layer — spec 0027). Built via
+/// `Document::clone_subtree`; apply restores it, revert removes it by root.
+#[derive(Debug)]
+pub struct InsertSubtree {
+    pub root: NodeId,
+    pub nodes: Vec<(NodeId, Node)>,
+    pub parent: NodeId,
+    pub index: usize,
+    label: String,
+}
+
+impl InsertSubtree {
+    pub fn new(
+        root: NodeId,
+        nodes: Vec<(NodeId, Node)>,
+        parent: NodeId,
+        index: usize,
+        label: impl Into<String>,
+    ) -> Self {
+        Self { root, nodes, parent, index, label: label.into() }
+    }
+}
+
+impl Command for InsertSubtree {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        doc.restore_subtree(self.nodes.clone(), self.parent, self.index)
+            .expect("valid insert target");
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        doc.remove_subtree(self.root).expect("subtree present to remove");
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Swap a node's `kind` wholesale (e.g. rasterize a vector layer — INT-2,
 /// spec 0023). Props/children/parent are untouched.
 #[derive(Debug)]
@@ -788,6 +827,38 @@ mod tests {
         // Merge coalesces same-target edits (one undo per drag).
         let next = SetVectorShapes::new(&doc, id, edited);
         assert!(cmd.try_merge(next.as_any()));
+    }
+
+    #[test]
+    fn insert_subtree_duplicates_with_fresh_ids() {
+        let mut doc = Document::new([32, 32], ProjectFocus::Raster);
+        let root = doc.root();
+        // group { a }
+        let mut add_g = AddNode::new(&mut doc, Node::group("g"), root, 0);
+        add_g.apply(&mut doc);
+        let g = add_g.id;
+        let mut add_a = AddNode::new(&mut doc, leaf("a"), g, 0);
+        add_a.apply(&mut doc);
+
+        let before = doc.children(root).len();
+        let (new_root, nodes) = doc.clone_subtree(g, root).expect("clone");
+        assert_eq!(nodes.len(), 2, "group + child cloned");
+        assert_ne!(new_root, g, "fresh root id");
+        for (nid, _) in &nodes {
+            assert_ne!(*nid, g);
+            assert_ne!(*nid, add_a.id);
+        }
+
+        let mut cmd =
+            InsertSubtree::new(new_root, nodes, root, 0, "Duplicate Layer");
+        cmd.apply(&mut doc);
+        assert_eq!(doc.children(root).len(), before + 1, "duplicate inserted");
+        assert!(doc.node(new_root).is_some());
+        assert_eq!(doc.children(new_root).len(), 1, "child cloned under new group");
+
+        cmd.revert(&mut doc);
+        assert_eq!(doc.children(root).len(), before, "revert removed duplicate");
+        assert!(doc.node(new_root).is_none());
     }
 
     #[test]
