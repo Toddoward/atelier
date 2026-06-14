@@ -68,26 +68,40 @@ impl Source for BufferSource<'_> {
     }
 }
 
-/// Samples an origin-`[0,0]` buffer placed at `offset` and scaled by `scale`
-/// (nearest-neighbour). Parent → buffer: `(p − offset) / scale` (spec 0055).
-struct ScaledSource<'a> {
+/// Samples an origin-`[0,0]` buffer placed at `offset` under an affine inverse
+/// (rotate + scale about the embedded document's centre, nearest-neighbour).
+/// `inv` is the 2×2 inverse of `M = R(θ)·S`, applied to the pixel centre relative
+/// to `center`: embedded `e = center + inv·(p + 0.5 − offset − center)` (spec
+/// 0055/0056). Centre pivot keeps the object in place when scaled/rotated.
+struct AffineSource<'a> {
     buf: &'a Buffer,
     offset: [i32; 2],
-    scale: [f32; 2],
+    center: [f32; 2],
+    inv: [[f32; 2]; 2],
 }
 
-impl Source for ScaledSource<'_> {
-    fn sample(&self, x: i32, y: i32) -> [f32; 4] {
-        let (sx, sy) = (self.scale[0], self.scale[1]);
+impl AffineSource<'_> {
+    /// Build the inverse of `M = R(θ)·S`; `M⁻¹ = [[c/sx, s/sx], [−s/sy, c/sy]]`.
+    fn inverse(scale: [f32; 2], rotation: f32) -> Option<[[f32; 2]; 2]> {
+        let (sx, sy) = (scale[0], scale[1]);
         if sx <= 0.0 || sy <= 0.0 {
+            return None;
+        }
+        let (c, s) = (rotation.cos(), rotation.sin());
+        Some([[c / sx, s / sx], [-s / sy, c / sy]])
+    }
+}
+
+impl Source for AffineSource<'_> {
+    fn sample(&self, x: i32, y: i32) -> [f32; 4] {
+        let dx = (x - self.offset[0]) as f32 + 0.5 - self.center[0];
+        let dy = (y - self.offset[1]) as f32 + 0.5 - self.center[1];
+        let ex = self.inv[0][0] * dx + self.inv[0][1] * dy + self.center[0];
+        let ey = self.inv[1][0] * dx + self.inv[1][1] * dy + self.center[1];
+        if ex < 0.0 || ey < 0.0 {
             return [0.0; 4];
         }
-        let fx = (x - self.offset[0]) as f32 / sx;
-        let fy = (y - self.offset[1]) as f32 / sy;
-        if fx < 0.0 || fy < 0.0 {
-            return [0.0; 4];
-        }
-        let (bx, by) = (fx.floor() as usize, fy.floor() as usize);
+        let (bx, by) = (ex.floor() as usize, ey.floor() as usize);
         if bx >= self.buf.w || by >= self.buf.h {
             return [0.0; 4];
         }
@@ -205,8 +219,11 @@ fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
             let mut inner = Buffer::transparent(dw as usize, dh as usize, [0, 0]);
             let root = content.doc.root();
             composite_children(&content.doc, root, &mut inner);
-            let src = ScaledSource { buf: &inner, offset: content.offset, scale: content.scale };
-            blend_onto(backdrop, &src, props.blend, props.opacity);
+            if let Some(inv) = AffineSource::inverse(content.scale, content.rotation) {
+                let center = [dw as f32 / 2.0, dh as f32 / 2.0];
+                let src = AffineSource { buf: &inner, offset: content.offset, center, inv };
+                blend_onto(backdrop, &src, props.blend, props.opacity);
+            }
         }
         // text/fill: later phases.
         _ => {}
@@ -381,7 +398,7 @@ mod tests {
         let root = doc.root();
         let smart = Node::new(
             LayerProps::named("smart"),
-            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [2, 2], scale: [1.0, 1.0] }),
+            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [2, 2], scale: [1.0, 1.0], rotation: 0.0 }),
         );
         add(&mut doc, smart, root, 0);
 
@@ -405,7 +422,7 @@ mod tests {
             &mut doc,
             Node::new(
                 LayerProps::named("smart"),
-                NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0], scale: [1.0, 1.0] }),
+                NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0], scale: [1.0, 1.0], rotation: 0.0 }),
             ),
             root,
             0,
@@ -420,10 +437,10 @@ mod tests {
     #[test]
     fn smart_object_scales_non_destructively() {
         use atelier_core::SmartContent;
-        // Embedded 2x2 red block at the origin of a 4x4 doc.
+        // Embedded 4x4 fully red, scaled 2× about its centre (spec 0055/0056).
         let mut inner = Document::new([4, 4], ProjectFocus::Raster);
         let iroot = inner.root();
-        add(&mut inner, solid_layer("r", [0.0, 0.0, 2.0, 2.0], [1.0, 0.0, 0.0, 1.0]), iroot, 0);
+        add(&mut inner, solid_layer("r", [0.0, 0.0, 4.0, 4.0], [1.0, 0.0, 0.0, 1.0]), iroot, 0);
         let mut doc = Document::new([8, 8], ProjectFocus::Raster);
         let root = doc.root();
         add(
@@ -434,16 +451,45 @@ mod tests {
                     doc: Box::new(inner),
                     offset: [0, 0],
                     scale: [2.0, 2.0],
+                    rotation: 0.0,
                 }),
             ),
             root,
             0,
         );
         let out = composite_rgba8(&doc, 8, 8);
-        // The 2x2 block scaled 2x covers parent [0,0)..[4,4).
-        assert_eq!(px(&out, 8, 0, 0), [255, 0, 0, 255]);
-        assert_eq!(px(&out, 8, 3, 3), [255, 0, 0, 255], "2x-scaled block reaches (3,3)");
-        assert_eq!(px(&out, 8, 4, 4), [0, 0, 0, 0], "past the 2x-scaled block");
+        // 2× about the centre: the 4×4 doc grows to cover parent ~[-2,6).
+        assert_eq!(px(&out, 8, 5, 5), [255, 0, 0, 255], "scaled 2× reaches (5,5)");
+        assert_eq!(px(&out, 8, 6, 6), [0, 0, 0, 0], "past the 2×-scaled doc");
+    }
+
+    #[test]
+    fn smart_object_rotates_about_center() {
+        use atelier_core::SmartContent;
+        // Embedded 4x4 with a single red marker at (3,0).
+        let mut inner = Document::new([4, 4], ProjectFocus::Raster);
+        let iroot = inner.root();
+        add(&mut inner, solid_layer("m", [3.0, 0.0, 1.0, 1.0], [1.0, 0.0, 0.0, 1.0]), iroot, 0);
+        let mut doc = Document::new([8, 8], ProjectFocus::Raster);
+        let root = doc.root();
+        add(
+            &mut doc,
+            Node::new(
+                LayerProps::named("smart"),
+                NodeKind::Smart(SmartContent {
+                    doc: Box::new(inner),
+                    offset: [0, 0],
+                    scale: [1.0, 1.0],
+                    rotation: std::f32::consts::FRAC_PI_2,
+                }),
+            ),
+            root,
+            0,
+        );
+        let out = composite_rgba8(&doc, 8, 8);
+        // 90° about centre (2,2): embedded (3,0) lands at parent (3,3).
+        assert_eq!(px(&out, 8, 3, 3), [255, 0, 0, 255], "marker rotated to (3,3)");
+        assert_eq!(px(&out, 8, 3, 0), [0, 0, 0, 0], "marker left its original cell");
     }
 
     #[test]

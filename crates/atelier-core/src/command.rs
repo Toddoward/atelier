@@ -274,6 +274,43 @@ impl Command for SetSmartScale {
     }
 }
 
+/// Set a smart object's non-destructive rotation (radians). Undoable (spec 0056).
+#[derive(Debug)]
+pub struct SetSmartRotation {
+    pub id: NodeId,
+    pub old: f32,
+    pub new: f32,
+}
+
+impl SetSmartRotation {
+    pub fn new(doc: &Document, id: NodeId, new: f32) -> Self {
+        let old = match &doc.node(id).expect("node present").kind {
+            crate::NodeKind::Smart(c) => c.rotation,
+            _ => panic!("SetSmartRotation on a non-smart node"),
+        };
+        Self { id, old, new }
+    }
+}
+
+impl Command for SetSmartRotation {
+    fn label(&self) -> String {
+        "Rotate Smart Object".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if let crate::NodeKind::Smart(c) = &mut doc.node_mut(self.id).expect("node present").kind {
+            c.rotation = self.new;
+        }
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        if let crate::NodeKind::Smart(c) = &mut doc.node_mut(self.id).expect("node present").kind {
+            c.rotation = self.old;
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Pixel edits captured as before/after tile snapshots. Built after the live
 /// stroke already mutated the tiles; record via `History::push_committed`.
 #[derive(Debug)]
@@ -1151,7 +1188,7 @@ mod tests {
         let inner = Document::new([32, 32], ProjectFocus::Raster);
         let smart = Node::new(
             LayerProps::named("smart"),
-            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0], scale: [1.0, 1.0] }),
+            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0], scale: [1.0, 1.0], rotation: 0.0 }),
         );
         let mut add = AddNode::new(&mut doc, smart, root, 0);
         add.apply(&mut doc);
@@ -1190,6 +1227,30 @@ mod tests {
         assert_eq!(scale(&doc), [2.0, 3.0], "scale applied");
         cmd.revert(&mut doc);
         assert_eq!(scale(&doc), [1.0, 1.0], "revert restores unit scale");
+    }
+
+    #[test]
+    fn set_smart_rotation_applies_and_reverts() {
+        use crate::SmartContent;
+        let mut doc = Document::new([16, 16], ProjectFocus::Raster);
+        let root = doc.root();
+        let smart = Node::new(
+            LayerProps::named("s"),
+            NodeKind::Smart(SmartContent::embed(Document::new([16, 16], ProjectFocus::Raster))),
+        );
+        let mut add = AddNode::new(&mut doc, smart, root, 0);
+        add.apply(&mut doc);
+        let id = add.id;
+
+        let mut cmd = SetSmartRotation::new(&doc, id, 1.25);
+        cmd.apply(&mut doc);
+        let rot = |d: &Document| match &d.node(id).unwrap().kind {
+            NodeKind::Smart(c) => c.rotation,
+            _ => panic!("smart expected"),
+        };
+        assert_eq!(rot(&doc), 1.25, "rotation applied");
+        cmd.revert(&mut doc);
+        assert_eq!(rot(&doc), 0.0, "revert restores zero rotation");
     }
 
     fn raster_with_pixels() -> (Document, NodeId) {

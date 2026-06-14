@@ -348,11 +348,17 @@ impl AtelierApp {
         use atelier_core::NodeKind;
         let Some(st) = &mut self.state else { return };
         let Some(id) = st.editor.selection else { return };
-        // Smart objects scale non-destructively (rotation ignored here, spec 0055):
-        // multiply the current scale by the dialog's percentages.
+        // Smart objects transform non-destructively (spec 0055/0056): multiply the
+        // current scale by the dialog's percentages and add its rotation, as one
+        // undoable step.
         if let Some(NodeKind::Smart(c)) = st.editor.doc.node(id).map(|n| &n.kind) {
-            let new = [c.scale[0] * scale_x / 100.0, c.scale[1] * scale_y / 100.0];
-            let cmd = atelier_core::command::SetSmartScale::new(&st.editor.doc, id, new);
+            let new_scale = [c.scale[0] * scale_x / 100.0, c.scale[1] * scale_y / 100.0];
+            let new_rot = c.rotation + rotate_deg.to_radians();
+            let cmds: Vec<Box<dyn atelier_core::Command>> = vec![
+                Box::new(atelier_core::command::SetSmartScale::new(&st.editor.doc, id, new_scale)),
+                Box::new(atelier_core::command::SetSmartRotation::new(&st.editor.doc, id, new_rot)),
+            ];
+            let cmd = atelier_core::command::Batch::new(cmds, "Transform Smart Object");
             st.editor.apply(Box::new(cmd));
             return;
         }
@@ -2413,6 +2419,49 @@ mod ui_tests {
         send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
         match &h.state().state.as_ref().unwrap().editor.doc.node(sel).unwrap().kind {
             atelier_core::NodeKind::Smart(c) => assert_eq!(c.scale, [1.0, 1.0], "undo restores"),
+            _ => panic!("smart expected"),
+        }
+    }
+
+    /// Spec 0056: Transform applies scale AND rotation to a smart object as one
+    /// undoable step.
+    #[test]
+    fn transform_rotates_and_scales_smart_object_one_step() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        h.state_mut().convert_to_smart();
+        h.run();
+        let sel = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        let before_len = h.state().state.as_ref().unwrap().editor.history.applied_len();
+
+        h.state_mut().apply_transform(200.0, 200.0, 90.0);
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(sel).unwrap().kind {
+                atelier_core::NodeKind::Smart(c) => {
+                    assert_eq!(c.scale, [2.0, 2.0], "scale set");
+                    assert!(
+                        (c.rotation - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+                        "rotation set"
+                    );
+                }
+                k => panic!("expected smart, got {}", k.kind_name()),
+            }
+            assert_eq!(
+                st.editor.history.applied_len(),
+                before_len + 1,
+                "scale + rotation = one undoable step"
+            );
+        }
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        match &h.state().state.as_ref().unwrap().editor.doc.node(sel).unwrap().kind {
+            atelier_core::NodeKind::Smart(c) => {
+                assert_eq!(c.scale, [1.0, 1.0], "undo restores scale");
+                assert_eq!(c.rotation, 0.0, "undo restores rotation");
+            }
             _ => panic!("smart expected"),
         }
     }

@@ -3,7 +3,31 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-14-aw (spec 0055 — non-destructive smart-object scale DONE)
+## Last session: 2026-06-14-ax (spec 0056 — non-destructive smart-object rotation DONE)
+
+### Done
+- **Spec 0056 ☑** — smart objects rotate non-destructively. `SmartContent.rotation: f32`
+  (serde default 0) + `SetSmartRotation` command. Compositor's `ScaledSource` → **`AffineSource`**
+  (inverse of `M = R(θ)·S`, nearest-neighbour) now pivots about the **embedded centre** with
+  pixel-centre sampling — one sampler covers translate+scale+rotate. App `apply_transform` on a
+  Smart applies scale+rotation as one `Batch`. **Pivot moved from corner (0055) to centre**
+  (corner-pivot rotation throws content off-canvas); the 0055 scale test was updated. raster 51
+  + core 45 + app 55 tests green, clippy clean, smoke clean.
+
+### Next
+1. **Edit smart-object contents** ("Edit Contents" → enter/return from the embedded doc; needs
+   an editor-context stack — app is single-doc). This is the remaining smart-object gap.
+2. **Crisp-at-zoom vector re-rasterization** (spec 0051 follow-up); bilinear smart-object
+   sampling (quality pass — currently nearest-neighbour).
+3. **INT-4 cross-paste** (needs multi-document support).
+4. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; big gated item).
+
+### Watch out (additions)
+- Smart-object transforms pivot about the **embedded document centre** and sample
+  nearest-neighbour. Scale+rotation from the Transform dialog commit as one `Batch`.
+- `AffineSource::inverse` returns `None` for non-positive scale (skips compositing that layer).
+
+## Previous session: 2026-06-14-aw (spec 0055 — non-destructive smart-object scale DONE)
 
 ### Done
 - **Spec 0055 ☑** — smart objects scale non-destructively: `SmartContent.scale: [f32;2]`

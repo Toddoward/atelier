@@ -45,3 +45,6 @@ loss (it always resamples from the embedded source). The Transform dialog drives
 ## Notes / surprises
 - Scaling resamples from the embedded buffer every composite, so it's lossless under repeated
   edits — the whole point of a smart object vs. baking raster tiles.
+- **Superseded pivot:** this slice scaled about the offset origin; spec 0056 moved scale (and
+  rotation) to pivot about the embedded centre. The compositor scale test here was updated to
+  the centre-pivot result when 0056 landed.

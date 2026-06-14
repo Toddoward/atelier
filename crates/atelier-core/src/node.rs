@@ -101,6 +101,9 @@ pub struct SmartContent {
     /// document by this each frame (spec 0055). Defaults to 1× for older files.
     #[serde(default = "unit_scale")]
     pub scale: [f32; 2],
+    /// Non-destructive rotation in radians about the offset origin (spec 0056).
+    #[serde(default)]
+    pub rotation: f32,
 }
 
 fn unit_scale() -> [f32; 2] {
@@ -108,9 +111,9 @@ fn unit_scale() -> [f32; 2] {
 }
 
 impl SmartContent {
-    /// Embed `doc` at the origin with no scaling.
+    /// Embed `doc` at the origin with no scaling or rotation.
     pub fn embed(doc: crate::Document) -> Self {
-        Self { doc: Box::new(doc), offset: [0, 0], scale: [1.0, 1.0] }
+        Self { doc: Box::new(doc), offset: [0, 0], scale: [1.0, 1.0], rotation: 0.0 }
     }
 }
 
