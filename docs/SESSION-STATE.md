@@ -3,7 +3,24 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ad (spec 0036 — fill selection DONE)
+## Last session: 2026-06-13-ae (spec 0037 — gradient fill DONE)
+
+### Done
+- **Spec 0037 ☑** — Gradient tool (key `G`): `atelier-raster::fill::gradient_region` (two-stop
+  linear, mask+offset aware) + canvas drag-axis (live preview) → foreground→transparent fill
+  via `apply_gradient`, undoable. raster +1 / app 40 tests green, clippy clean, smoke clean.
+
+### Next
+1. **Radial/multi-stop gradients**, **flood-fill (contiguous) bucket** (RAS-9 remainder).
+2. **INT-4 cross-paste**, **smart objects** (DOC-5), **z-interleaved compositing** (Phase 5).
+3. **Phase 6 color management** (lcms2 — add liblcms2-dev to ubuntu CI apt or vendor; verify
+   cross-platform first — the big gated item).
+
+### Watch out (additions)
+- Gradient uses select_drag for the axis + PaintTiles for undo; only the fill kernel is new.
+  Foreground→transparent single-color default (no gradient stop UI yet).
+
+## Previous session: 2026-06-13-ad (spec 0036 — fill selection DONE)
 
 ### Done
 - **Spec 0036 ☑** — fill selection/layer with brush color: `atelier-raster::fill::fill_region`

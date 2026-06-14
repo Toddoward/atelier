@@ -46,6 +46,47 @@ pub fn fill_region(
     }
 }
 
+/// Fill `region` with a two-stop linear gradient from `c0` at `p0` to `c1` at
+/// `p1` (doc space), clipped by `mask`, respecting the layer `offset`.
+/// Straight-alpha source-over; `t` is the projection onto the p0→p1 axis.
+#[allow(clippy::too_many_arguments)]
+pub fn gradient_region(
+    tiles: &mut TileMap,
+    c0: [f32; 4],
+    c1: [f32; 4],
+    p0: [f32; 2],
+    p1: [f32; 2],
+    offset: [i32; 2],
+    region: [i32; 4],
+    mask: Option<&Mask>,
+) {
+    let (dx, dy) = (p1[0] - p0[0], p1[1] - p0[1]);
+    let len2 = dx * dx + dy * dy;
+    for y in region[1]..region[3] {
+        for x in region[0]..region[2] {
+            let cov = mask.map_or(255u8, |m| m.get(x, y));
+            if cov == 0 {
+                continue;
+            }
+            let t = if len2 <= 1e-6 {
+                0.0
+            } else {
+                (((x as f32 + 0.5 - p0[0]) * dx + (y as f32 + 0.5 - p0[1]) * dy) / len2)
+                    .clamp(0.0, 1.0)
+            };
+            let col = [
+                c0[0] + (c1[0] - c0[0]) * t,
+                c0[1] + (c1[1] - c0[1]) * t,
+                c0[2] + (c1[2] - c0[2]) * t,
+                c0[3] + (c1[3] - c0[3]) * t,
+            ];
+            let (lx, ly) = (x - offset[0], y - offset[1]);
+            let out = src_over(tiles.pixel(lx, ly), col, cov as f32 / 255.0);
+            tiles.set_pixel(lx, ly, out);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,6 +113,27 @@ mod tests {
         fill_region(&mut t, [0.0, 0.0, 1.0, 1.0], [10, 0], [0, 0, 4, 4], Some(&m));
         assert_eq!(t.pixel(-10, 0), [0, 0, 255, 255], "filled inside selection (layer space)");
         assert_eq!(t.pixel(-8, 0), [0, 0, 0, 0], "outside selection not filled");
+    }
+
+    #[test]
+    fn gradient_interpolates_along_axis() {
+        let mut t = TileMap::new();
+        // Red opaque at x=0 → red transparent at x=10, horizontal.
+        gradient_region(
+            &mut t,
+            [1.0, 0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [0, 0],
+            [0, 0, 10, 1],
+            None,
+        );
+        let a0 = t.pixel(0, 0)[3];
+        let a9 = t.pixel(9, 0)[3];
+        assert!(a0 > 230, "start ~opaque: {a0}");
+        assert!(a9 < 60, "end ~transparent: {a9}");
+        assert!(a0 > t.pixel(5, 0)[3] && t.pixel(5, 0)[3] > a9, "monotonic falloff");
     }
 
     #[test]

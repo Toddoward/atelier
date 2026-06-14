@@ -404,7 +404,71 @@ fn handle_tools(
                 }
             }
         }
+        ActiveTool::Gradient => {
+            // Drag defines the axis; on release fill selection/layer with a
+            // foreground→transparent linear gradient (spec 0037).
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                let origin = ui
+                    .input(|i| i.pointer.press_origin())
+                    .or_else(|| response.interact_pointer_pos());
+                if let Some(pos) = origin {
+                    let doc = pointer_doc(pos);
+                    state.select_drag =
+                        Some(SelectDrag { start: doc, current: doc, points: vec![doc] });
+                }
+            }
+            if response.dragged_by(egui::PointerButton::Primary) {
+                if let (Some(drag), Some(pos)) =
+                    (&mut state.select_drag, response.interact_pointer_pos())
+                {
+                    drag.current = pointer_doc(pos);
+                }
+            }
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                if let Some(drag) = state.select_drag.take() {
+                    apply_gradient(state, drag.start, drag.current);
+                }
+            }
+        }
     }
+}
+
+/// Fill the selection (or whole layer) of the selected raster layer with a
+/// foreground→transparent linear gradient along `p0`→`p1` (doc space). Undoable.
+fn apply_gradient(state: &mut EditorState, p0: [f32; 2], p1: [f32; 2]) {
+    use atelier_core::{NodeKind, TILE_SIZE};
+    let Some(id) = editable_raster(state) else { return };
+    let offset = raster_offset(state, id);
+    let fg = state.brush.color;
+    let c0 = fg;
+    let c1 = [fg[0], fg[1], fg[2], 0.0];
+    let mask = state.editor.doc.selection.clone();
+    let [w, h] = state.editor.doc.size;
+    let region = match mask.as_deref().and_then(|m| m.bounds()) {
+        Some(b) => [b[0].max(0), b[1].max(0), b[2].min(w as i32), b[3].min(h as i32)],
+        None => [0, 0, w as i32, h as i32],
+    };
+    if region[0] >= region[2] || region[1] >= region[3] {
+        return;
+    }
+    let t = TILE_SIZE as i32;
+    let (lx0, ly0) = ((region[0] - offset[0]).div_euclid(t), (region[1] - offset[1]).div_euclid(t));
+    let (lx1, ly1) =
+        ((region[2] - 1 - offset[0]).div_euclid(t), (region[3] - 1 - offset[1]).div_euclid(t));
+    let mut before = Vec::new();
+    if let NodeKind::Raster(c) = &state.editor.doc.node(id).expect("checked").kind {
+        for ty in ly0..=ly1 {
+            for tx in lx0..=lx1 {
+                before.push(((tx, ty), c.tiles.tile_at((tx, ty)).cloned()));
+            }
+        }
+    }
+    if let NodeKind::Raster(c) = &mut state.editor.doc.node_mut(id).expect("checked").kind {
+        atelier_raster::gradient_region(&mut c.tiles, c0, c1, p0, p1, offset, region, mask.as_deref());
+    }
+    let cmd =
+        atelier_core::command::PaintTiles::from_capture(&state.editor.doc, id, "Gradient", before);
+    state.editor.history.push_committed(Box::new(cmd));
 }
 
 /// Composited straight-alpha color at doc pixel `d`, None if out of bounds.
@@ -684,6 +748,9 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
             ActiveTool::Lasso => {
                 let pts: Vec<egui::Pos2> = drag.points.iter().map(|&p| to_screen(p)).collect();
                 painter.add(egui::Shape::line(pts, stroke));
+            }
+            ActiveTool::Gradient => {
+                painter.line_segment([to_screen(drag.start), to_screen(drag.current)], stroke);
             }
             _ => {}
         }

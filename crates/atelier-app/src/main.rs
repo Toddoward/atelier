@@ -52,6 +52,7 @@ pub enum ActiveTool {
     Pen,
     DirectSelect,
     Eyedropper,
+    Gradient,
 }
 
 /// Which primitive a shape-tool drag produces (spec 0014/0015).
@@ -923,6 +924,10 @@ impl AtelierApp {
                     // Plain I = eyedropper; Ctrl+I (invert) is handled above.
                     if i.key_pressed(Key::I) && i.modifiers.is_none() {
                         st.tool = ActiveTool::Eyedropper;
+                    }
+                    // Plain G = gradient; Ctrl+G (group) is handled above.
+                    if i.key_pressed(Key::G) && i.modifiers.is_none() {
+                        st.tool = ActiveTool::Gradient;
                     }
                     if i.key_pressed(Key::P) {
                         st.tool = ActiveTool::Pen;
@@ -2300,6 +2305,41 @@ mod ui_tests {
             n0,
             "undo removed the duplicate"
         );
+    }
+
+    /// Spec 0037: gradient fill across a layer (foreground→transparent); undoable.
+    #[test]
+    fn gradient_fill_via_pointer_and_undo() {
+        let mut h = harness();
+        create_doc(&mut h); // 64×64
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                c.tiles = atelier_core::TileMap::new();
+            }
+            st.brush.color = [1.0, 0.0, 0.0, 1.0];
+            st.tool = ActiveTool::Gradient;
+        }
+        // Drag a horizontal axis across the canvas.
+        pointer_drag(&mut h, egui::pos2(220.0, 80.0), egui::pos2(700.0, 80.0));
+        h.run();
+        let alpha = |h: &Harness<'static, AtelierApp>, x: i32, y: i32| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Raster(c) => c.tiles.pixel(x, y)[3],
+                _ => panic!(),
+            }
+        };
+        // Left edge more opaque than right edge (foreground→transparent).
+        let left = alpha(&h, 1, 30);
+        let right = alpha(&h, 62, 30);
+        assert!(left > right, "gradient falls off left→right: {left} vs {right}");
+        assert!(left > 100, "near start fairly opaque: {left}");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(alpha(&h, 1, 30), 0, "undo cleared the gradient");
     }
 
     /// Spec 0036: fill the selection with the brush color; undoable.
