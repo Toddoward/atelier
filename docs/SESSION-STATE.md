@@ -3,7 +3,27 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-aa (spec 0033 — export PNG/JPEG DONE)
+## Last session: 2026-06-13-ab (spec 0034 — TIFF/WebP/GIF/BMP DONE)
+
+### Done
+- **Spec 0034 ☑** — added `image` features tiff/webp/gif/bmp; `IMPORT_EXTENSIONS`/
+  `EXPORT_EXTENSIONS` constants drive Place/Export dialogs; decode is format-agnostic, save
+  infers from extension. io 14 tests (TIFF+BMP lossless round-trip), clippy clean, smoke clean.
+  FMT-4 raster codecs complete (sans ICC).
+
+### Next
+1. **INT-4 cross-paste** (pixels/paths across the doc); **smart objects** (DOC-5);
+   **z-interleaved raster+vector compositing**.
+2. **Phase 6 color management** (lcms2) — system lib. Before committing: the Ubuntu CI
+   runner needs `liblcms2-dev` (add to the apt step in .github/workflows/ci.yml) or use a
+   vendored/pure-Rust alternative. Verify cross-platform build first.
+3. PSD import (Phase 8) eventually — big.
+
+### Watch out (additions)
+- Image format support is feature-gated in the workspace `image` dep; GIF/WebP first-frame
+  only. ICC not handled yet.
+
+## Previous session: 2026-06-13-aa (spec 0033 — export PNG/JPEG DONE)
 
 ### Done
 - **Spec 0033 ☑** — export flattened doc to PNG/JPEG: `atelier-io::encode_png`/`save_image`

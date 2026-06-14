@@ -546,8 +546,7 @@ impl AtelierApp {
             return;
         }
         let path = rfd::FileDialog::new()
-            .add_filter("PNG", &["png"])
-            .add_filter("JPEG", &["jpg", "jpeg"])
+            .add_filter("Image", atelier_io::EXPORT_EXTENSIONS)
             .set_file_name("export.png")
             .save_file();
         if let Some(path) = path {
@@ -561,7 +560,7 @@ impl AtelierApp {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Image", &["png", "jpg", "jpeg"])
+            .add_filter("Image", atelier_io::IMPORT_EXTENSIONS)
             .pick_file()
         else {
             return;

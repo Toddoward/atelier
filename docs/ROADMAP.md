@@ -18,7 +18,7 @@ Phase 4 → 0012 ☑ (path model + tessellation) + 0013 ☑ (canvas render) + 00
 | 4 | Vector engine | Path model, pen/direct-select, shapes, fill/stroke, booleans, align, tessellated GPU render (VEC-1..7) | Boolean op test corpus; crisp zoom; editing checklist | ☑ |
 | 5 | Focus modes & interop | New-doc focus chooser, workspace presets, rasterize vector layer, place image, cross-paste (INT-1..4) | Interop checklist both directions | ◐ (INT-1 groundwork, INT-2 ☑ spec 0023, INT-3 ☑ spec 0032) |
 | 6 | Color management | lcms2 integration, working spaces, assign/convert, display profile, color picker/swatches (COL-1,2,5,6) | Round-trip ΔE tests vs reference values; visual proof on wide-gamut display path | ☐ |
-| 7 | Formats I | PNG/JPEG/TIFF/WebP/BMP/GIF with ICC; SVG import; `.atl` v1 freeze + spec doc (FMT-4,5; DOC-7) | Fixture corpus round-trips; fuzz smoke; degradation report UI | ☐ |
+| 7 | Formats I | PNG/JPEG/TIFF/WebP/BMP/GIF with ICC; SVG import; `.atl` v1 freeze + spec doc (FMT-4,5; DOC-7) | Fixture corpus round-trips; fuzz smoke; degradation report UI | ◐ (FMT-4 raster import/export done specs 0032-0034, sans ICC; SVG + ICC remain) |
 | 8 | PSD | PSD import (P0 subset) then export; degradation reporting (FMT-1,2) | Real-world PSD corpus renders within tolerance vs reference PNGs; PS-opens-our-export check | ☐ |
 | 9 | AI vector formats | .ai import via PDF-compat stream; PDF export; SVG export (FMT-3,6; COL-3,4 soft proof) | AI fixture corpus → editable paths; exported PDF/SVG validates in 3rd-party tools | ☐ |
 | 10 | Smart objects & effects | Smart objects embedded/linked, layer effects, clipping masks (DOC-5,10; FMT-9 prep) | Non-destructive transform checklist; edit-source-updates-instances test | ☐ |

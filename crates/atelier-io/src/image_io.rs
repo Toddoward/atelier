@@ -1,5 +1,10 @@
-//! Raster image decoding for Place (INT-3, spec 0032). Wraps the `image` crate;
-//! decodes PNG/JPEG bytes to straight-alpha RGBA8.
+//! Raster image decode/encode for Place and Export. Wraps the `image` crate;
+//! decodes/encodes PNG, JPEG, TIFF, WebP, GIF, BMP (spec 0032/0033/0034).
+
+/// Import file extensions accepted by Place / Open dialogs.
+pub const IMPORT_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "tiff", "tif", "webp", "gif", "bmp"];
+/// Export file extensions offered (lossless/alpha-friendly first).
+pub const EXPORT_EXTENSIONS: &[&str] = &["png", "tiff", "tif", "bmp", "webp", "jpg", "jpeg"];
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImageError {
@@ -115,5 +120,21 @@ mod tests {
     #[test]
     fn encode_png_rejects_mismatched_buffer() {
         assert!(matches!(encode_png(4, 4, &[0, 0, 0, 255]), Err(ImageError::Buffer(4, 4))));
+    }
+
+    /// Lossless formats round-trip through save_image/load_image.
+    #[test]
+    fn lossless_formats_round_trip() {
+        let (w, h) = (3u32, 2u32);
+        let rgba: Vec<u8> = (0..w * h).flat_map(|i| [i as u8 * 8, 40, 200, 255]).collect();
+        for ext in ["tiff", "bmp"] {
+            let path = std::env::temp_dir()
+                .join(format!("atelier-fmt-{}-{ext}.{ext}", std::process::id()));
+            save_image(&path, w, h, &rgba).unwrap();
+            let got = load_image(&path).unwrap();
+            std::fs::remove_file(&path).ok();
+            assert_eq!((got.width, got.height), (w, h), "{ext} size");
+            assert_eq!(got.rgba, rgba, "{ext} pixels round-trip");
+        }
     }
 }
