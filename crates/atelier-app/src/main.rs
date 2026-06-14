@@ -1002,6 +1002,36 @@ impl AtelierApp {
         st.editor.apply(Box::new(cmd));
     }
 
+    /// Wrap the selected non-group layer in an embedded document (smart object).
+    /// The embedded doc holds the original content at Normal/1.0 so the smart
+    /// node's own blend/opacity apply exactly once (spec 0052).
+    fn convert_to_smart(&mut self) {
+        use atelier_core::{Document, LayerProps, Node, NodeKind, SmartContent};
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let Some(node) = st.editor.doc.node(id) else { return };
+        if node.kind.is_group() || matches!(node.kind, NodeKind::Smart(_)) {
+            return;
+        }
+        let inner_kind = node.kind.clone();
+        let name = node.props.name.clone();
+        let (size, focus) = (st.editor.doc.size, st.editor.doc.focus);
+        let mut inner = Document::new(size, focus);
+        let inner_root = inner.root();
+        let layer_id = inner.alloc_id();
+        inner
+            .insert_node(layer_id, Node::new(LayerProps::named(name), inner_kind), inner_root, 0)
+            .expect("root is a group");
+        let content = SmartContent { doc: Box::new(inner), offset: [0, 0] };
+        let cmd = atelier_core::command::ReplaceNodeKind::new(
+            &st.editor.doc,
+            id,
+            NodeKind::Smart(content),
+            "Convert to Smart Object",
+        );
+        st.editor.apply(Box::new(cmd));
+    }
+
     /// Insert a non-destructive adjustment layer above the selection.
     fn add_adjustment_layer(&mut self, adj: atelier_raster::Adjustment) {
         use atelier_core::{LayerProps, Node, NodeKind};
@@ -1375,6 +1405,19 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.rasterize_selected_layer();
+                        ui.close_menu();
+                    }
+                    let smartable = self.state.as_ref().is_some_and(|s| {
+                        s.editor.selection.and_then(|id| s.editor.doc.node(id)).is_some_and(|n| {
+                            !n.kind.is_group()
+                                && !matches!(n.kind, atelier_core::NodeKind::Smart(_))
+                        })
+                    });
+                    if ui
+                        .add_enabled(smartable, egui::Button::new("Convert to Smart Object"))
+                        .clicked()
+                    {
+                        self.convert_to_smart();
                         ui.close_menu();
                     }
                     if ui
@@ -2593,6 +2636,62 @@ mod ui_tests {
             h.state().state.as_ref().unwrap().editor.doc.node_count(),
             n0,
             "undo removed both pastes"
+        );
+    }
+
+    /// Spec 0052: convert a layer to a smart object — the composite is unchanged
+    /// and the original content moves into an embedded document; undo restores
+    /// the original kind.
+    #[test]
+    fn convert_to_smart_wraps_and_undoes() {
+        use atelier_core::{LayerProps, Node, NodeKind, PlaceholderArt, RasterContent};
+        let mut h = harness();
+        create_doc(&mut h);
+        let sel = {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let node = Node::new(
+                LayerProps::named("base"),
+                NodeKind::Raster(RasterContent::from_placeholder(PlaceholderArt {
+                    bounds: [0.0, 0.0, 16.0, 16.0],
+                    color: [0.2, 0.4, 0.8, 1.0],
+                })),
+            );
+            let cmd = atelier_core::command::AddNode::new(&mut st.editor.doc, node, root, 0);
+            let id = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(id);
+            id
+        };
+        h.run();
+        let before = {
+            let doc = &h.state().state.as_ref().unwrap().editor.doc;
+            let [w, hh] = doc.size;
+            atelier_raster::composite_rgba8(doc, w, hh)
+        };
+
+        h.state_mut().convert_to_smart();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            let inner_layers = match &st.editor.doc.node(sel).unwrap().kind {
+                NodeKind::Smart(c) => c.doc.children(c.doc.root()).len(),
+                k => panic!("expected smart, got {}", k.kind_name()),
+            };
+            assert_eq!(inner_layers, 1, "embedded doc holds the original layer");
+            let doc = &st.editor.doc;
+            let [w, hh] = doc.size;
+            let after = atelier_raster::composite_rgba8(doc, w, hh);
+            assert_eq!(before, after, "wrapping doesn't change the composite");
+        }
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(
+            matches!(
+                h.state().state.as_ref().unwrap().editor.doc.node(sel).unwrap().kind,
+                NodeKind::Raster(_)
+            ),
+            "undo restored the original raster kind"
         );
     }
 

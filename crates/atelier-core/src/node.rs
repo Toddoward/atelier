@@ -87,6 +87,18 @@ impl RasterContent {
     }
 }
 
+/// Smart-object payload (spec 0052): an independent embedded document composited
+/// in place at `offset`. The embedded tree structure serializes inline, but its
+/// pixel tiles are `#[serde(skip)]` like any raster — persisting embedded pixels
+/// is deferred to spec 0053 (schema v3, embedded `.atl` parts).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SmartContent {
+    pub doc: Box<crate::Document>,
+    /// Top-left placement of the embedded document in this document's space.
+    #[serde(default)]
+    pub offset: [i32; 2],
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     Group { expanded: bool },
@@ -95,9 +107,10 @@ pub enum NodeKind {
     Vector(atelier_vector::VectorContent),
     /// Non-destructive adjustment layer (spec 0009): re-tones the backdrop below.
     Adjustment(Adjustment),
-    /// Stubs until their phases (11, 10, 2): carry no data yet.
+    /// Embedded independent document, composited in place (spec 0052).
+    Smart(SmartContent),
+    /// Stubs until their phases (11, 2): carry no data yet.
     Text,
-    Smart,
     Fill,
 }
 
@@ -113,7 +126,7 @@ impl NodeKind {
             NodeKind::Vector(_) => "Vector",
             NodeKind::Adjustment(_) => "Adjustment",
             NodeKind::Text => "Text",
-            NodeKind::Smart => "Smart Object",
+            NodeKind::Smart(_) => "Smart Object",
             NodeKind::Fill => "Fill",
         }
     }

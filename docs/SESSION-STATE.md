@@ -3,7 +3,35 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-14-as (spec 0051 — z-interleaved vector compositing DONE)
+## Last session: 2026-06-14-at (spec 0052 — smart objects embed & composite DONE)
+
+### Done
+- **Spec 0052 ☑** — smart objects (DOC-5, first slice): `NodeKind::Smart(SmartContent { doc:
+  Box<Document>, offset })`; compositor `Smart` arm composites the embedded doc recursively
+  into an offset-shifted buffer (re-aligned, then blended once with the smart node's
+  blend/opacity) — nested groups/clips/vectors/smarts all work via `composite_children`
+  recursion. App `convert_to_smart` (Layer menu "Convert to Smart Object") wraps the selected
+  non-group layer via `ReplaceNodeKind` (undoable). raster 49 + app 52 tests green
+  (`smart_object_composites_embedded_doc_at_offset`, `smart_object_opacity_applies_once`,
+  `convert_to_smart_wraps_and_undoes`), clippy clean, smoke clean.
+
+### Next
+1. **Spec 0053 — persist embedded docs** in `.atl` (schema v3, embedded `.atl` parts /
+   recursive tile parts). Embedded *structure* serializes inline today, but embedded raster
+   tiles are `#[serde(skip)]` ⇒ lost on reload. Closes the last R-14 item.
+2. **Edit smart-object contents** ("Edit Contents" → open embedded doc); non-destructive
+   transform of the smart object beyond integer offset.
+3. **INT-4 cross-paste** (needs multi-document support — currently single-doc app);
+   crisp-at-zoom vector re-rasterization (spec 0051 follow-up).
+4. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; big gated item).
+
+### Watch out (additions)
+- Saving a `.atl` with a smart object writes the embedded doc *tree* into manifest.json but
+  NOT its pixels (deferred to 0053). No round-trip test creates smart objects yet, so no io
+  regression — but don't assume embedded pixels survive save until 0053 lands.
+- GPU compositor has no `Smart` arm (CPU only) — tracked under R-13.
+
+## Previous session: 2026-06-14-as (spec 0051 — z-interleaved vector compositing DONE)
 
 ### Done
 - **Spec 0051 ☑** — vector layers now composite through the CPU compositor in tree z-order:

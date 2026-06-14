@@ -168,7 +168,23 @@ fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
                 blend_onto(backdrop, &BufferSource(&isolated), props.blend, props.opacity);
             }
         }
-        // Vector tessellation (canvas overlay), text/smart/fill: later phases.
+        NodeKind::Smart(content) => {
+            // Composite the embedded document into an isolated buffer whose
+            // window is shifted by -offset (so embedded (0,0) lands at offset),
+            // then re-label the origin so its pixels index-align with this
+            // backdrop's window before blending (spec 0052). Recursion via
+            // composite_children supports nested groups/clips/vectors/smarts.
+            let shifted = [
+                backdrop.origin[0] - content.offset[0],
+                backdrop.origin[1] - content.offset[1],
+            ];
+            let mut inner = Buffer::transparent(backdrop.w, backdrop.h, shifted);
+            let root = content.doc.root();
+            composite_children(&content.doc, root, &mut inner);
+            inner.origin = backdrop.origin;
+            blend_onto(backdrop, &BufferSource(&inner), props.blend, props.opacity);
+        }
+        // text/fill: later phases.
         _ => {}
     }
 }
@@ -327,6 +343,54 @@ mod tests {
         let out = composite_rgba8(&doc, 8, 8);
         assert_eq!(px(&out, 8, 2, 2), [255, 0, 0, 255], "raster wins above the vector");
         assert_eq!(px(&out, 8, 6, 6), [0, 255, 0, 255], "vector wins above the raster");
+    }
+
+    #[test]
+    fn smart_object_composites_embedded_doc_at_offset() {
+        use atelier_core::SmartContent;
+        // Embedded doc: a red 4x4 square at its own (0,0).
+        let mut inner = Document::new([8, 8], ProjectFocus::Raster);
+        let iroot = inner.root();
+        add(&mut inner, solid_layer("r", [0.0, 0.0, 4.0, 4.0], [1.0, 0.0, 0.0, 1.0]), iroot, 0);
+        // Outer doc places the smart object at offset (2,2).
+        let mut doc = Document::new([8, 8], ProjectFocus::Raster);
+        let root = doc.root();
+        let smart = Node::new(
+            LayerProps::named("smart"),
+            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [2, 2] }),
+        );
+        add(&mut doc, smart, root, 0);
+
+        let out = composite_rgba8(&doc, 8, 8);
+        assert_eq!(px(&out, 8, 0, 0), [0, 0, 0, 0], "embedded content shifted off (0,0)");
+        assert_eq!(px(&out, 8, 3, 3), [255, 0, 0, 255], "red square shifted to (2,2)..(6,6)");
+        assert_eq!(px(&out, 8, 5, 5), [255, 0, 0, 255], "still inside the shifted square");
+        assert_eq!(px(&out, 8, 6, 6), [0, 0, 0, 0], "past the shifted square");
+    }
+
+    #[test]
+    fn smart_object_opacity_applies_once() {
+        use atelier_core::SmartContent;
+        let mut inner = Document::new([4, 4], ProjectFocus::Raster);
+        let iroot = inner.root();
+        // Embedded layer at full opacity; the smart node carries the 0.5.
+        add(&mut inner, solid_layer("w", [0.0, 0.0, 4.0, 4.0], [1.0, 1.0, 1.0, 1.0]), iroot, 0);
+        let mut doc = Document::new([4, 4], ProjectFocus::Raster);
+        let root = doc.root();
+        let id = add(
+            &mut doc,
+            Node::new(
+                LayerProps::named("smart"),
+                NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0] }),
+            ),
+            root,
+            0,
+        );
+        doc.node_mut(id).unwrap().props.opacity = 0.5;
+        let out = composite_rgba8(&doc, 4, 4);
+        let got = px(&out, 4, 1, 1);
+        assert_eq!(got[3], 128, "smart opacity applied exactly once");
+        assert_eq!(got[0], 255, "straight color survives");
     }
 
     #[test]

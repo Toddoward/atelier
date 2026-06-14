@@ -19,5 +19,5 @@ pub use command::Command;
 pub use document::{Document, ProjectFocus};
 pub use history::{Editor, History};
 pub use mask::{CombineOp, Mask};
-pub use node::{LayerProps, Node, NodeId, NodeKind, PlaceholderArt, RasterContent};
+pub use node::{LayerProps, Node, NodeId, NodeKind, PlaceholderArt, RasterContent, SmartContent};
 pub use tile::{Tile, TileCoord, TileMap, TILE_SIZE};
