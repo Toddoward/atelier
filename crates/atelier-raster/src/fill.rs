@@ -87,6 +87,43 @@ pub fn gradient_region(
     }
 }
 
+/// Tile a `pw×ph` straight-alpha RGBA pattern across `region` (anchored to doc
+/// origin), clipped by `mask`, source-over, respecting the layer `offset`.
+#[allow(clippy::too_many_arguments)]
+pub fn fill_pattern(
+    tiles: &mut TileMap,
+    pat: &[u8],
+    pw: u32,
+    ph: u32,
+    offset: [i32; 2],
+    region: [i32; 4],
+    mask: Option<&Mask>,
+) {
+    if pw == 0 || ph == 0 || pat.len() != (pw as usize * ph as usize * 4) {
+        return;
+    }
+    for dy in region[1]..region[3] {
+        for dx in region[0]..region[2] {
+            let cov = mask.map_or(255u8, |m| m.get(dx, dy));
+            if cov == 0 {
+                continue;
+            }
+            let px = dx.rem_euclid(pw as i32) as usize;
+            let py = dy.rem_euclid(ph as i32) as usize;
+            let i = (py * pw as usize + px) * 4;
+            let col = [
+                pat[i] as f32 / 255.0,
+                pat[i + 1] as f32 / 255.0,
+                pat[i + 2] as f32 / 255.0,
+                pat[i + 3] as f32 / 255.0,
+            ];
+            let (lx, ly) = (dx - offset[0], dy - offset[1]);
+            let out = src_over(tiles.pixel(lx, ly), col, cov as f32 / 255.0);
+            tiles.set_pixel(lx, ly, out);
+        }
+    }
+}
+
 /// Like [`gradient_region`] but radial: `c0` at `center` (= p0) fading to `c1`
 /// at radius `|p1 − p0|`.
 #[allow(clippy::too_many_arguments)]
@@ -191,6 +228,18 @@ mod tests {
         assert!(a0 > 230, "start ~opaque: {a0}");
         assert!(a9 < 60, "end ~transparent: {a9}");
         assert!(a0 > t.pixel(5, 0)[3] && t.pixel(5, 0)[3] > a9, "monotonic falloff");
+    }
+
+    #[test]
+    fn pattern_tiles_with_wrap() {
+        let mut t = TileMap::new();
+        // 2×1 pattern: red then green, both opaque.
+        let pat = [255, 0, 0, 255, 0, 255, 0, 255];
+        fill_pattern(&mut t, &pat, 2, 1, [0, 0], [0, 0, 4, 1], None);
+        assert_eq!(t.pixel(0, 0), [255, 0, 0, 255]);
+        assert_eq!(t.pixel(1, 0), [0, 255, 0, 255]);
+        assert_eq!(t.pixel(2, 0), [255, 0, 0, 255], "wraps every 2 px");
+        assert_eq!(t.pixel(3, 0), [0, 255, 0, 255]);
     }
 
     #[test]

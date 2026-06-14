@@ -144,6 +144,8 @@ pub struct EditorState {
     /// Additional selected nodes beyond `editor.selection` (shift-click in the
     /// Layers panel) — enables Group of multiple layers (spec 0028).
     pub selected_extra: Vec<NodeId>,
+    /// Defined fill pattern (Edit → Define Pattern), tiled by Fill with Pattern.
+    pub pattern: Option<atelier_io::DecodedImage>,
     /// Copy/paste source node (same document). Paste deep-clones it fresh each
     /// time (spec 0030).
     pub clipboard: Option<NodeId>,
@@ -301,6 +303,7 @@ impl AtelierApp {
                     vector_cache: None,
                     pending_shape: None,
                     selected_extra: Vec::new(),
+                    pattern: None,
                     clipboard: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
@@ -534,6 +537,79 @@ impl AtelierApp {
         let id = cmd.id;
         st.editor.apply(Box::new(cmd));
         st.editor.selection = Some(id);
+    }
+
+    /// Define the fill pattern from the selected raster layer's content bounds
+    /// (or selection bounds), copying its pixels (spec 0043).
+    fn define_pattern(&mut self) {
+        use atelier_core::NodeKind;
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let (tiles, offset) = match st.editor.doc.node(id).map(|n| &n.kind) {
+            Some(NodeKind::Raster(c)) => (c.tiles.clone(), c.offset),
+            _ => return,
+        };
+        let region = st.editor.doc.selection.as_deref().and_then(|m| m.tight_bounds()).or_else(|| {
+            tiles
+                .bounds()
+                .map(|[x0, y0, x1, y1]| [x0 + offset[0], y0 + offset[1], x1 + offset[0], y1 + offset[1]])
+        });
+        let Some([x0, y0, x1, y1]) = region else { return };
+        let (w, h) = ((x1 - x0).max(1) as u32, (y1 - y0).max(1) as u32);
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                rgba.extend_from_slice(&tiles.pixel(x - offset[0], y - offset[1]));
+            }
+        }
+        st.pattern = Some(atelier_io::DecodedImage { width: w, height: h, rgba });
+    }
+
+    /// Fill the selection (or whole layer) of the selected raster layer with the
+    /// defined pattern, tiled (spec 0043). No-op if no pattern defined.
+    fn fill_with_pattern(&mut self) {
+        use atelier_core::{NodeKind, TILE_SIZE};
+        let Some(st) = &mut self.state else { return };
+        let Some(pat) = st.pattern.clone() else { return };
+        let Some(id) = st.editor.selection else { return };
+        let offset = match st.editor.doc.node(id).map(|n| (&n.kind, &n.props)) {
+            Some((NodeKind::Raster(c), p)) if p.visible && !p.locked => c.offset,
+            _ => return,
+        };
+        let mask = st.editor.doc.selection.clone();
+        let [w, h] = st.editor.doc.size;
+        let region = match mask.as_deref().and_then(|m| m.bounds()) {
+            Some(b) => [b[0].max(0), b[1].max(0), b[2].min(w as i32), b[3].min(h as i32)],
+            None => [0, 0, w as i32, h as i32],
+        };
+        if region[0] >= region[2] || region[1] >= region[3] {
+            return;
+        }
+        let t = TILE_SIZE as i32;
+        let (lx0, ly0) =
+            ((region[0] - offset[0]).div_euclid(t), (region[1] - offset[1]).div_euclid(t));
+        let (lx1, ly1) =
+            ((region[2] - 1 - offset[0]).div_euclid(t), (region[3] - 1 - offset[1]).div_euclid(t));
+        let mut before = Vec::new();
+        if let NodeKind::Raster(c) = &st.editor.doc.node(id).expect("checked").kind {
+            for ty in ly0..=ly1 {
+                for tx in lx0..=lx1 {
+                    before.push(((tx, ty), c.tiles.tile_at((tx, ty)).cloned()));
+                }
+            }
+        }
+        if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).expect("checked").kind {
+            atelier_raster::fill_pattern(
+                &mut c.tiles, &pat.rgba, pat.width, pat.height, offset, region, mask.as_deref(),
+            );
+        }
+        let cmd = atelier_core::command::PaintTiles::from_capture(
+            &st.editor.doc,
+            id,
+            "Fill with Pattern",
+            before,
+        );
+        st.editor.history.push_committed(Box::new(cmd));
     }
 
     /// Fill the selection (or whole layer) of the selected raster layer with the
@@ -1298,6 +1374,19 @@ impl AtelierApp {
                         self.fill_selection();
                         ui.close_menu();
                     }
+                    if ui.add_enabled(has_sel, egui::Button::new("Define Pattern")).clicked() {
+                        self.define_pattern();
+                        ui.close_menu();
+                    }
+                    let has_pattern =
+                        self.state.as_ref().is_some_and(|s| s.pattern.is_some());
+                    if ui
+                        .add_enabled(has_sel && has_pattern, egui::Button::new("Fill with Pattern"))
+                        .clicked()
+                    {
+                        self.fill_with_pattern();
+                        ui.close_menu();
+                    }
                     if ui.add_enabled(has_sel, egui::Button::new("Copy Layer\t(Ctrl+C)")).clicked() {
                         self.copy_selected_layer();
                         ui.close_menu();
@@ -1361,6 +1450,7 @@ impl AtelierApp {
                     vector_cache: None,
                     pending_shape: None,
                     selected_extra: Vec::new(),
+                    pattern: None,
                     clipboard: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
@@ -2648,6 +2738,71 @@ mod ui_tests {
 
         send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
         assert_eq!(alpha(&h, 1, 30), 0, "undo cleared the gradient");
+    }
+
+    /// Spec 0043: define a pattern from one layer, tile-fill another; undoable.
+    #[test]
+    fn define_and_fill_with_pattern() {
+        let mut h = harness();
+        create_doc(&mut h);
+        // Source layer: 2×1 red/green pattern in the top-left.
+        click_label(&mut h, "+ Layer");
+        let src = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(src).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.set_pixel(0, 0, [255, 0, 0, 255]);
+                t.set_pixel(1, 0, [0, 255, 0, 255]);
+                c.tiles = t;
+            }
+            // Select the 2×1 source region, define pattern.
+            let mut m = atelier_core::Mask::new();
+            m.set(0, 0, 255);
+            m.set(1, 0, 255);
+            let cmd = atelier_core::command::SetSelection::new(
+                &st.editor.doc,
+                Some(std::sync::Arc::new(m)),
+                "src",
+            );
+            st.editor.apply(Box::new(cmd));
+        }
+        h.state_mut().define_pattern();
+        assert!(h.state().state.as_ref().unwrap().pattern.is_some(), "pattern defined");
+
+        // Target layer + a 4×1 selection, fill with the pattern.
+        click_label(&mut h, "+ Layer");
+        let dst = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(dst).unwrap().kind {
+                c.tiles = atelier_core::TileMap::new();
+            }
+            let mut m = atelier_core::Mask::new();
+            for x in 0..4 {
+                m.set(x, 0, 255);
+            }
+            let cmd = atelier_core::command::SetSelection::new(
+                &st.editor.doc,
+                Some(std::sync::Arc::new(m)),
+                "dst",
+            );
+            st.editor.apply(Box::new(cmd));
+        }
+        h.state_mut().fill_with_pattern();
+        h.run();
+        let px = |h: &Harness<'static, AtelierApp>, x: i32| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(dst).unwrap().kind {
+                NodeKind::Raster(c) => c.tiles.pixel(x, 0),
+                _ => panic!(),
+            }
+        };
+        assert_eq!(px(&h, 0), [255, 0, 0, 255]);
+        assert_eq!(px(&h, 1), [0, 255, 0, 255]);
+        assert_eq!(px(&h, 2), [255, 0, 0, 255], "pattern tiled");
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(px(&h, 0), [0, 0, 0, 0], "undo cleared the pattern fill");
     }
 
     /// Spec 0036: fill the selection with the brush color; undoable.

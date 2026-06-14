@@ -3,7 +3,26 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-aj (spec 0042 — merge visible DONE)
+## Last session: 2026-06-13-ak (spec 0043 — pattern fill DONE)
+
+### Done
+- **Spec 0043 ☑** — define pattern + pattern fill: `fill::fill_pattern` (tiled, anchored to
+  doc origin) + `Mask::tight_bounds` (pixel-exact extent) + app `define_pattern`/
+  `fill_with_pattern` (Edit menu, `EditorState.pattern`). RAS-9 fill set now complete:
+  solid/linear/radial/flood/pattern. raster +1 / core +1 / app 46 tests green, clippy clean.
+
+### Next
+1. **INT-4 cross-paste** (pixels/paths); **smart objects** (DOC-5); **z-interleaved
+   raster+vector compositing** (Phase 5 — also unblocks vector merge).
+2. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; verify
+   cross-platform — the big gated item).
+3. Brush dynamics (flow/spacing/pressure); PSD import (Phase 8, large).
+
+### Watch out (additions)
+- `Mask::bounds()` is tile-granular; use `Mask::tight_bounds()` when you need pixel-exact
+  selection extent (pattern definition, future crop-to-selection-exact, etc.).
+
+## Previous session: 2026-06-13-aj (spec 0042 — merge visible DONE)
 
 ### Done
 - **Spec 0042 ☑** — Merge Visible: `command::MergeVisible` merges visible top-level layers

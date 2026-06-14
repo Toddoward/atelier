@@ -73,6 +73,24 @@ impl Mask {
         Some([x0 * t, y0 * t, (x1 + 1) * t, (y1 + 1) * t])
     }
 
+    /// Pixel-exact content bounds `[x0,y0,x1,y1)` (scans within the coarse
+    /// tile bounds). None when empty. Spec 0043.
+    pub fn tight_bounds(&self) -> Option<[i32; 4]> {
+        let [bx0, by0, bx1, by1] = self.bounds()?;
+        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for y in by0..by1 {
+            for x in bx0..bx1 {
+                if self.get(x, y) > 0 {
+                    x0 = x0.min(x);
+                    y0 = y0.min(y);
+                    x1 = x1.max(x + 1);
+                    y1 = y1.max(y + 1);
+                }
+            }
+        }
+        (x0 <= x1).then_some([x0, y0, x1, y1])
+    }
+
     pub fn prune_blank(&mut self) {
         self.tiles.retain(|_, t| t.iter().any(|&v| v != 0));
     }
