@@ -3,7 +3,26 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-am (spec 0045 — selection to vector DONE)
+## Last session: 2026-06-13-an (spec 0046 — clipping masks DONE)
+
+### Done
+- **Spec 0046 ☑** — clipping masks (DOC-4): CPU compositor clips a run of `clip` raster
+  layers to the raster base below (isolated buffers masked by base alpha; non-clip docs use
+  the unchanged direct path so golden parity stays bit-exact). `SetClip` command + Layers-panel
+  "Clip to below" checkbox. raster 46 / app 48 tests green, clippy clean, smoke clean.
+
+### Next
+1. **Layer/vector masks** (DOC-4 remainder — a paintable mask per layer); **smart objects**
+   (DOC-5); **z-interleaved compositing** (Phase 5).
+2. **INT-4 cross-paste**; **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or
+   vendor; verify cross-platform — big gated item).
+
+### Watch out (additions)
+- Clip path only engages when a raster layer has clip=true above a raster base; everything
+  else (incl. GPU golden fixtures) uses the direct compositor path. Read all LayerProps fields
+  into locals before apply-closures in panels (borrow revival).
+
+## Previous session: 2026-06-13-am (spec 0045 — selection to vector DONE)
 
 ### Done
 - **Spec 0045 ☑** — Select → To Vector Path (INT-5 reverse): `selection::boundary_paths`

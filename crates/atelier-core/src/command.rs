@@ -175,6 +175,7 @@ prop_command!(SetName, String, name, "Rename Layer", merge: false);
 prop_command!(SetVisible, bool, visible, "Toggle Visibility", merge: false);
 prop_command!(SetOpacity, f32, opacity, "Layer Opacity", merge: true);
 prop_command!(SetBlend, BlendMode, blend, "Blend Mode", merge: false);
+prop_command!(SetClip, bool, clip, "Clipping Mask", merge: false);
 
 fn raster_content_mut(doc: &mut Document, id: NodeId) -> &mut crate::RasterContent {
     match &mut doc.node_mut(id).expect("node present").kind {

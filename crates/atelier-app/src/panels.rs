@@ -224,6 +224,7 @@ fn selected_layer_controls(ui: &mut egui::Ui, state: &mut EditorState) {
     let Some(node) = state.editor.doc.node(id) else { return };
     let mut blend = node.props.blend;
     let mut opacity = node.props.opacity;
+    let mut clip = node.props.clip;
 
     ui.horizontal(|ui| {
         ui.label("Blend");
@@ -254,6 +255,11 @@ fn selected_layer_controls(ui: &mut egui::Ui, state: &mut EditorState) {
             state.editor.history.set_merging(false);
         }
     });
+    // Clipping mask toggle (clip to the layer below).
+    if ui.checkbox(&mut clip, "Clip to below").changed() {
+        let cmd = atelier_core::command::SetClip::new(&state.editor.doc, id, clip);
+        state.editor.apply(Box::new(cmd));
+    }
 }
 
 fn visible_rows(state: &EditorState) -> Vec<(NodeId, usize)> {

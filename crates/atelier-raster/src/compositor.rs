@@ -127,35 +127,96 @@ fn adjust_backdrop(backdrop: &mut Buffer, adj: atelier_core::Adjustment, opacity
     }
 }
 
+/// Composite one node directly onto the backdrop (no clip handling).
+fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
+    let Some(node) = doc.node(id) else { return };
+    let props = &node.props;
+    match &node.kind {
+        NodeKind::Raster(content) => {
+            let src = TileSource { tiles: &content.tiles, offset: content.offset };
+            blend_onto(backdrop, &src, props.blend, props.opacity);
+        }
+        NodeKind::Adjustment(adj) => {
+            adjust_backdrop(backdrop, *adj, props.opacity);
+        }
+        NodeKind::Group { .. } => {
+            if props.blend == BlendMode::PassThrough && props.opacity >= 1.0 {
+                composite_children(doc, id, backdrop);
+            } else {
+                let mut isolated = Buffer::transparent(backdrop.w, backdrop.h, backdrop.origin);
+                composite_children(doc, id, &mut isolated);
+                blend_onto(backdrop, &BufferSource(&isolated), props.blend, props.opacity);
+            }
+        }
+        // Vector tessellation (canvas overlay), text/smart/fill: later phases.
+        _ => {}
+    }
+}
+
+/// Render a raster layer into its own transparent buffer (own opacity, Normal).
+fn render_raster_isolated(doc: &Document, id: NodeId, w: usize, h: usize, origin: [i32; 2]) -> Buffer {
+    let mut buf = Buffer::transparent(w, h, origin);
+    if let Some(NodeKind::Raster(content)) = doc.node(id).map(|n| &n.kind) {
+        let src = TileSource { tiles: &content.tiles, offset: content.offset };
+        let opacity = doc.node(id).expect("present").props.opacity;
+        blend_onto(&mut buf, &src, BlendMode::Normal, opacity);
+    }
+    buf
+}
+
 /// Children are stored top-first (panel order); painter's algorithm wants
-/// bottom-first, so iterate reversed.
+/// bottom-first. Clipping masks (DOC-4): a run of `clip` raster layers above a
+/// raster base is masked by the base's alpha (spec 0046).
 fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
-    for &id in doc.children(parent).iter().rev() {
-        let Some(node) = doc.node(id) else { continue };
-        if !node.props.visible {
+    let kids: Vec<NodeId> = doc.children(parent).iter().rev().copied().collect();
+    let visible = |id: NodeId| doc.node(id).is_some_and(|n| n.props.visible);
+    let is_raster = |id: NodeId| matches!(doc.node(id).map(|n| &n.kind), Some(NodeKind::Raster(_)));
+    let mut i = 0;
+    while i < kids.len() {
+        let id = kids[i];
+        if !visible(id) {
+            i += 1;
             continue;
         }
-        let props = &node.props;
-        match &node.kind {
-            NodeKind::Raster(content) => {
-                let src = TileSource { tiles: &content.tiles, offset: content.offset };
-                blend_onto(backdrop, &src, props.blend, props.opacity);
-            }
-            NodeKind::Adjustment(adj) => {
-                adjust_backdrop(backdrop, *adj, props.opacity);
-            }
-            NodeKind::Group { .. } => {
-                if props.blend == BlendMode::PassThrough && props.opacity >= 1.0 {
-                    composite_children(doc, id, backdrop);
+        let clipped = doc.node(id).expect("present").props.clip;
+        // A raster base (clip=false) may carry a run of clip raster layers.
+        if is_raster(id) && !clipped {
+            let mut clips = Vec::new();
+            let mut j = i + 1;
+            while j < kids.len() {
+                if !visible(kids[j]) {
+                    j += 1;
+                    continue;
+                }
+                if doc.node(kids[j]).expect("present").props.clip && is_raster(kids[j]) {
+                    clips.push(kids[j]);
+                    j += 1;
                 } else {
-                    let mut isolated =
-                        Buffer::transparent(backdrop.w, backdrop.h, backdrop.origin);
-                    composite_children(doc, id, &mut isolated);
-                    blend_onto(backdrop, &BufferSource(&isolated), props.blend, props.opacity);
+                    break;
                 }
             }
-            // Vector tessellation (spec 0004+), adjustment/text/smart/fill: later phases.
-            _ => {}
+            if clips.is_empty() {
+                composite_node(doc, id, backdrop);
+                i += 1;
+            } else {
+                let (w, h, origin) = (backdrop.w, backdrop.h, backdrop.origin);
+                let mut base = render_raster_isolated(doc, id, w, h, origin);
+                let base_alpha: Vec<f32> = base.px.iter().map(|p| p[3]).collect();
+                for c in clips {
+                    let mut cb = render_raster_isolated(doc, c, w, h, origin);
+                    for (k, p) in cb.px.iter_mut().enumerate() {
+                        p[3] *= base_alpha[k]; // clip to base coverage
+                    }
+                    let mode = doc.node(c).expect("present").props.blend;
+                    blend_onto(&mut base, &BufferSource(&cb), mode, 1.0);
+                }
+                let base_mode = doc.node(id).expect("present").props.blend;
+                blend_onto(backdrop, &BufferSource(&base), base_mode, 1.0);
+                i = j;
+            }
+        } else {
+            composite_node(doc, id, backdrop);
+            i += 1;
         }
     }
 }
@@ -335,6 +396,31 @@ mod tests {
 
     /// Region composite must equal the slice of the full composite — including
     /// Dissolve (absolute-coord hash) and offset layers.
+    #[test]
+    fn clipping_mask_limits_layer_to_base_alpha() {
+        use atelier_core::LayerProps;
+        let mut doc = Document::new([4, 4], ProjectFocus::Raster);
+        let root = doc.root();
+        // Base: opaque green only in the left half [0,0,2,4].
+        add(&mut doc, solid_layer("base", [0.0, 0.0, 2.0, 4.0], [0.0, 1.0, 0.0, 1.0]), root, 0);
+        // Clip layer: red filling the whole canvas, clipped to base.
+        let clip = Node::new(
+            LayerProps::named("clip"),
+            NodeKind::Raster(RasterContent::from_placeholder(PlaceholderArt {
+                bounds: [0.0, 0.0, 4.0, 4.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            })),
+        );
+        let cid = add(&mut doc, clip, root, 0); // top
+        doc.node_mut(cid).unwrap().props.clip = true;
+
+        let out = composite_rgba8(&doc, 4, 4);
+        // Left half: clip red shows (base present) → red.
+        assert_eq!(px(&out, 4, 0, 0), [255, 0, 0, 255], "clip visible over base");
+        // Right half: base absent → clip hidden → fully transparent.
+        assert_eq!(px(&out, 4, 3, 0), [0, 0, 0, 0], "clip hidden where base is transparent");
+    }
+
     #[test]
     fn adjustment_layer_retones_only_below() {
         use atelier_core::Adjustment;
