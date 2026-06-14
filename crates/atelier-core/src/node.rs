@@ -97,6 +97,21 @@ pub struct SmartContent {
     /// Top-left placement of the embedded document in this document's space.
     #[serde(default)]
     pub offset: [i32; 2],
+    /// Non-destructive scale factor (x, y); the compositor resamples the embedded
+    /// document by this each frame (spec 0055). Defaults to 1× for older files.
+    #[serde(default = "unit_scale")]
+    pub scale: [f32; 2],
+}
+
+fn unit_scale() -> [f32; 2] {
+    [1.0, 1.0]
+}
+
+impl SmartContent {
+    /// Embed `doc` at the origin with no scaling.
+    pub fn embed(doc: crate::Document) -> Self {
+        Self { doc: Box::new(doc), offset: [0, 0], scale: [1.0, 1.0] }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

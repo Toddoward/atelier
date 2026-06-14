@@ -3,7 +3,33 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-14-av (spec 0054 — move smart objects DONE)
+## Last session: 2026-06-14-aw (spec 0055 — non-destructive smart-object scale DONE)
+
+### Done
+- **Spec 0055 ☑** — smart objects scale non-destructively: `SmartContent.scale: [f32;2]`
+  (serde default `unit_scale`=[1,1]) + `SmartContent::embed`; `SetSmartScale` command
+  (undoable). Compositor `Smart` arm composites the embedded doc at native resolution then
+  blends through a nearest-neighbour **`ScaledSource`** (`(p−offset)/scale`), so re-scaling
+  always resamples the source — lossless. App `apply_transform` branches: a `Smart` selection
+  multiplies its scale via the Transform dialog (rotation ignored for smart objects this
+  slice); rasters bake as before. raster 50 + core 44 + app 54 tests green
+  (`smart_object_scales_non_destructively`, `set_smart_scale_applies_and_reverts`,
+  `transform_scales_smart_object_non_destructively`), clippy clean, smoke clean.
+
+### Next
+1. **Edit smart-object contents** ("Edit Contents" → enter/return from the embedded doc; needs
+   an editor-context stack — app is single-doc). Then smart-object **rotation** (compositor
+   currently translates + scales only; `ScaledSource` would extend to an affine sampler).
+2. **Crisp-at-zoom vector re-rasterization** (spec 0051 follow-up).
+3. **INT-4 cross-paste** (needs multi-document support).
+4. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; big gated item).
+
+### Watch out (additions)
+- `SmartContent` now has `scale`; new fields need a `#[serde(default=…)]` (its real default is
+  [1,1], not the `[f32;2]` zero default) or old `.atl` files break. Smart compositing is
+  nearest-neighbour (`ScaledSource`) — bilinear is a later quality pass.
+
+## Previous session: 2026-06-14-av (spec 0054 — move smart objects DONE)
 
 ### Done
 - **Spec 0054 ☑** — the Move tool now repositions a selected smart object: `SetOffset`

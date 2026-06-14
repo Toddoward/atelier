@@ -237,6 +237,43 @@ impl Command for SetOffset {
     }
 }
 
+/// Set a smart object's non-destructive scale factor (spec 0055). Undoable.
+#[derive(Debug)]
+pub struct SetSmartScale {
+    pub id: NodeId,
+    pub old: [f32; 2],
+    pub new: [f32; 2],
+}
+
+impl SetSmartScale {
+    pub fn new(doc: &Document, id: NodeId, new: [f32; 2]) -> Self {
+        let old = match &doc.node(id).expect("node present").kind {
+            crate::NodeKind::Smart(c) => c.scale,
+            _ => panic!("SetSmartScale on a non-smart node"),
+        };
+        Self { id, old, new }
+    }
+}
+
+impl Command for SetSmartScale {
+    fn label(&self) -> String {
+        "Scale Smart Object".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if let crate::NodeKind::Smart(c) = &mut doc.node_mut(self.id).expect("node present").kind {
+            c.scale = self.new;
+        }
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        if let crate::NodeKind::Smart(c) = &mut doc.node_mut(self.id).expect("node present").kind {
+            c.scale = self.old;
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Pixel edits captured as before/after tile snapshots. Built after the live
 /// stroke already mutated the tiles; record via `History::push_committed`.
 #[derive(Debug)]
@@ -1114,7 +1151,7 @@ mod tests {
         let inner = Document::new([32, 32], ProjectFocus::Raster);
         let smart = Node::new(
             LayerProps::named("smart"),
-            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0] }),
+            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0], scale: [1.0, 1.0] }),
         );
         let mut add = AddNode::new(&mut doc, smart, root, 0);
         add.apply(&mut doc);
@@ -1129,6 +1166,30 @@ mod tests {
         assert_eq!(off(&doc), [5, 7], "smart object moved");
         cmd.revert(&mut doc);
         assert_eq!(off(&doc), [0, 0], "revert restores the smart object's offset");
+    }
+
+    #[test]
+    fn set_smart_scale_applies_and_reverts() {
+        use crate::SmartContent;
+        let mut doc = Document::new([16, 16], ProjectFocus::Raster);
+        let root = doc.root();
+        let smart = Node::new(
+            LayerProps::named("s"),
+            NodeKind::Smart(SmartContent::embed(Document::new([16, 16], ProjectFocus::Raster))),
+        );
+        let mut add = AddNode::new(&mut doc, smart, root, 0);
+        add.apply(&mut doc);
+        let id = add.id;
+
+        let mut cmd = SetSmartScale::new(&doc, id, [2.0, 3.0]);
+        cmd.apply(&mut doc);
+        let scale = |d: &Document| match &d.node(id).unwrap().kind {
+            NodeKind::Smart(c) => c.scale,
+            _ => panic!("smart expected"),
+        };
+        assert_eq!(scale(&doc), [2.0, 3.0], "scale applied");
+        cmd.revert(&mut doc);
+        assert_eq!(scale(&doc), [1.0, 1.0], "revert restores unit scale");
     }
 
     fn raster_with_pixels() -> (Document, NodeId) {

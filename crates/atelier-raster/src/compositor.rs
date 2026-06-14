@@ -68,6 +68,33 @@ impl Source for BufferSource<'_> {
     }
 }
 
+/// Samples an origin-`[0,0]` buffer placed at `offset` and scaled by `scale`
+/// (nearest-neighbour). Parent → buffer: `(p − offset) / scale` (spec 0055).
+struct ScaledSource<'a> {
+    buf: &'a Buffer,
+    offset: [i32; 2],
+    scale: [f32; 2],
+}
+
+impl Source for ScaledSource<'_> {
+    fn sample(&self, x: i32, y: i32) -> [f32; 4] {
+        let (sx, sy) = (self.scale[0], self.scale[1]);
+        if sx <= 0.0 || sy <= 0.0 {
+            return [0.0; 4];
+        }
+        let fx = (x - self.offset[0]) as f32 / sx;
+        let fy = (y - self.offset[1]) as f32 / sy;
+        if fx < 0.0 || fy < 0.0 {
+            return [0.0; 4];
+        }
+        let (bx, by) = (fx.floor() as usize, fy.floor() as usize);
+        if bx >= self.buf.w || by >= self.buf.h {
+            return [0.0; 4];
+        }
+        self.buf.px[by * self.buf.w + bx]
+    }
+}
+
 /// Composite one source over `backdrop` with `mode` and `opacity`.
 fn blend_onto(backdrop: &mut Buffer, src: &dyn Source, mode: BlendMode, opacity: f32) {
     for y in 0..backdrop.h {
@@ -169,20 +196,17 @@ fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
             }
         }
         NodeKind::Smart(content) => {
-            // Composite the embedded document into an isolated buffer whose
-            // window is shifted by -offset (so embedded (0,0) lands at offset),
-            // then re-label the origin so its pixels index-align with this
-            // backdrop's window before blending (spec 0052). Recursion via
-            // composite_children supports nested groups/clips/vectors/smarts.
-            let shifted = [
-                backdrop.origin[0] - content.offset[0],
-                backdrop.origin[1] - content.offset[1],
-            ];
-            let mut inner = Buffer::transparent(backdrop.w, backdrop.h, shifted);
+            // Composite the embedded document at its native resolution into its
+            // own buffer, then blend through a scaled nearest-neighbour source
+            // placed at `offset` (spec 0052/0055). Recursion via composite_children
+            // supports nested groups/clips/vectors/smarts. Scaling resamples the
+            // embedded source each frame, so it's non-destructive.
+            let [dw, dh] = content.doc.size;
+            let mut inner = Buffer::transparent(dw as usize, dh as usize, [0, 0]);
             let root = content.doc.root();
             composite_children(&content.doc, root, &mut inner);
-            inner.origin = backdrop.origin;
-            blend_onto(backdrop, &BufferSource(&inner), props.blend, props.opacity);
+            let src = ScaledSource { buf: &inner, offset: content.offset, scale: content.scale };
+            blend_onto(backdrop, &src, props.blend, props.opacity);
         }
         // text/fill: later phases.
         _ => {}
@@ -357,7 +381,7 @@ mod tests {
         let root = doc.root();
         let smart = Node::new(
             LayerProps::named("smart"),
-            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [2, 2] }),
+            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [2, 2], scale: [1.0, 1.0] }),
         );
         add(&mut doc, smart, root, 0);
 
@@ -381,7 +405,7 @@ mod tests {
             &mut doc,
             Node::new(
                 LayerProps::named("smart"),
-                NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0] }),
+                NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0], scale: [1.0, 1.0] }),
             ),
             root,
             0,
@@ -391,6 +415,35 @@ mod tests {
         let got = px(&out, 4, 1, 1);
         assert_eq!(got[3], 128, "smart opacity applied exactly once");
         assert_eq!(got[0], 255, "straight color survives");
+    }
+
+    #[test]
+    fn smart_object_scales_non_destructively() {
+        use atelier_core::SmartContent;
+        // Embedded 2x2 red block at the origin of a 4x4 doc.
+        let mut inner = Document::new([4, 4], ProjectFocus::Raster);
+        let iroot = inner.root();
+        add(&mut inner, solid_layer("r", [0.0, 0.0, 2.0, 2.0], [1.0, 0.0, 0.0, 1.0]), iroot, 0);
+        let mut doc = Document::new([8, 8], ProjectFocus::Raster);
+        let root = doc.root();
+        add(
+            &mut doc,
+            Node::new(
+                LayerProps::named("smart"),
+                NodeKind::Smart(SmartContent {
+                    doc: Box::new(inner),
+                    offset: [0, 0],
+                    scale: [2.0, 2.0],
+                }),
+            ),
+            root,
+            0,
+        );
+        let out = composite_rgba8(&doc, 8, 8);
+        // The 2x2 block scaled 2x covers parent [0,0)..[4,4).
+        assert_eq!(px(&out, 8, 0, 0), [255, 0, 0, 255]);
+        assert_eq!(px(&out, 8, 3, 3), [255, 0, 0, 255], "2x-scaled block reaches (3,3)");
+        assert_eq!(px(&out, 8, 4, 4), [0, 0, 0, 0], "past the 2x-scaled block");
     }
 
     #[test]

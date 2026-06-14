@@ -506,7 +506,7 @@ mod tests {
             &mut doc,
             Node::new(
                 LayerProps::named("smart"),
-                NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [4, 6] }),
+                NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [4, 6], scale: [1.0, 1.0] }),
             ),
             root,
             0,
@@ -553,7 +553,7 @@ mod tests {
             &mut mid,
             Node::new(
                 LayerProps::named("mid-smart"),
-                NodeKind::Smart(SmartContent { doc: Box::new(deep), offset: [1, 1] }),
+                NodeKind::Smart(SmartContent { doc: Box::new(deep), offset: [1, 1], scale: [1.0, 1.0] }),
             ),
             mroot,
             0,
@@ -566,7 +566,7 @@ mod tests {
             &mut doc,
             Node::new(
                 LayerProps::named("top-smart"),
-                NodeKind::Smart(SmartContent { doc: Box::new(mid), offset: [2, 2] }),
+                NodeKind::Smart(SmartContent { doc: Box::new(mid), offset: [2, 2], scale: [1.0, 1.0] }),
             ),
             root,
             0,

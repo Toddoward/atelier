@@ -348,6 +348,14 @@ impl AtelierApp {
         use atelier_core::NodeKind;
         let Some(st) = &mut self.state else { return };
         let Some(id) = st.editor.selection else { return };
+        // Smart objects scale non-destructively (rotation ignored here, spec 0055):
+        // multiply the current scale by the dialog's percentages.
+        if let Some(NodeKind::Smart(c)) = st.editor.doc.node(id).map(|n| &n.kind) {
+            let new = [c.scale[0] * scale_x / 100.0, c.scale[1] * scale_y / 100.0];
+            let cmd = atelier_core::command::SetSmartScale::new(&st.editor.doc, id, new);
+            st.editor.apply(Box::new(cmd));
+            return;
+        }
         let tiles = match &st.editor.doc.node(id).map(|n| (&n.kind, &n.props)) {
             Some((NodeKind::Raster(c), p)) if p.visible && !p.locked => c.tiles.clone(),
             _ => return,
@@ -1022,7 +1030,7 @@ impl AtelierApp {
         inner
             .insert_node(layer_id, Node::new(LayerProps::named(name), inner_kind), inner_root, 0)
             .expect("root is a group");
-        let content = SmartContent { doc: Box::new(inner), offset: [0, 0] };
+        let content = SmartContent::embed(inner);
         let cmd = atelier_core::command::ReplaceNodeKind::new(
             &st.editor.doc,
             id,
@@ -2379,6 +2387,34 @@ mod ui_tests {
 
         send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
         assert_eq!(smart_off(&h), [0, 0], "undo restores the smart object's offset");
+    }
+
+    /// Spec 0055: Transform on a smart object sets a non-destructive scale
+    /// (embedded document untouched) and undo restores it.
+    #[test]
+    fn transform_scales_smart_object_non_destructively() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        h.state_mut().convert_to_smart();
+        h.run();
+        let sel = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+
+        h.state_mut().apply_transform(200.0, 150.0, 0.0);
+        h.run();
+        match &h.state().state.as_ref().unwrap().editor.doc.node(sel).unwrap().kind {
+            atelier_core::NodeKind::Smart(c) => {
+                assert_eq!(c.scale, [2.0, 1.5], "non-destructive scale set");
+                assert_eq!(c.doc.size, [64, 64], "embedded document untouched");
+            }
+            k => panic!("expected smart, got {}", k.kind_name()),
+        }
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        match &h.state().state.as_ref().unwrap().editor.doc.node(sel).unwrap().kind {
+            atelier_core::NodeKind::Smart(c) => assert_eq!(c.scale, [1.0, 1.0], "undo restores"),
+            _ => panic!("smart expected"),
+        }
     }
 
     #[test]
