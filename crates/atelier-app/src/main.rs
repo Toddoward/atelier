@@ -530,6 +530,31 @@ impl AtelierApp {
         st.editor.selection = Some(id);
     }
 
+    /// Export the flattened document to an image file (FMT-4, spec 0033).
+    fn export_to(&mut self, path: PathBuf) {
+        let Some(st) = &self.state else { return };
+        let [w, h] = st.editor.doc.size;
+        let rgba = atelier_raster::composite_rgba8(&st.editor.doc, w, h);
+        if let Err(e) = atelier_io::save_image(&path, w, h, &rgba) {
+            self.error = Some(e.to_string());
+        }
+    }
+
+    /// File → Export Image: pick a destination and write the flattened doc.
+    fn export_image_dialog(&mut self) {
+        if self.state.is_none() {
+            return;
+        }
+        let path = rfd::FileDialog::new()
+            .add_filter("PNG", &["png"])
+            .add_filter("JPEG", &["jpg", "jpeg"])
+            .set_file_name("export.png")
+            .save_file();
+        if let Some(path) = path {
+            self.export_to(path);
+        }
+    }
+
     /// File → Place: pick an image file and place it (INT-3).
     fn place_image_dialog(&mut self) {
         if self.state.is_none() {
@@ -885,6 +910,13 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.save(true);
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(has_doc, egui::Button::new("Export Image…"))
+                        .clicked()
+                    {
+                        self.export_image_dialog();
                         ui.close_menu();
                     }
                     ui.separator();
@@ -2000,6 +2032,30 @@ mod ui_tests {
         }
         h.run();
         h.run();
+    }
+
+    /// Spec 0033: export the flattened document to a PNG and read it back.
+    #[test]
+    fn export_document_to_png() {
+        let mut h = harness(); // 64×64 doc
+        create_doc(&mut h);
+        // Place a red image at the origin so the composite has known pixels.
+        h.state_mut().place_image(atelier_io::DecodedImage {
+            width: 8,
+            height: 8,
+            rgba: [255, 0, 0, 255].repeat(64),
+        });
+        h.run();
+        let path = std::env::temp_dir().join(format!("atelier-app-export-{}.png", std::process::id()));
+        h.state_mut().export_to(path.clone());
+        let got = atelier_io::load_image(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!((got.width, got.height), (64, 64), "exported at document size");
+        // (0,0) is inside the placed red square.
+        assert_eq!(&got.rgba[0..4], &[255, 0, 0, 255], "red exported");
+        // A pixel outside the 8×8 square is transparent.
+        let i = (20 * 64 + 20) * 4;
+        assert_eq!(got.rgba[i + 3], 0, "outside placed image is transparent");
     }
 
     /// Spec 0032: place a decoded image as a raster layer; undo removes it.

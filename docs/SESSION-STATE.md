@@ -3,7 +3,26 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-z (spec 0032 — place image / INT-3 DONE; Phase 5 started)
+## Last session: 2026-06-13-aa (spec 0033 — export PNG/JPEG DONE)
+
+### Done
+- **Spec 0033 ☑** — export flattened doc to PNG/JPEG: `atelier-io::encode_png`/`save_image`
+  (PNG keeps alpha, JPEG→RGB, buffer-validated); app `export_to`/`export_image_dialog`
+  (File → Export Image…) composites via `composite_rgba8` then writes. io 13 / app 37 tests
+  green, clippy clean, smoke clean. Round-trip with Place (0032) works (place→export→reload).
+
+### Next
+1. **Remaining FMT-4 formats** (TIFF/WebP/GIF/BMP) — add `image` features + extend
+   decode/save filters; quick, no new dep.
+2. **INT-4 cross-paste**, **smart objects** (DOC-5), **z-interleaved compositing**.
+3. **Phase 6 color management** (lcms2 — system lib; verify CI has it or vendor; may need
+   apt liblcms2-dev on the ubuntu runner — check before committing).
+
+### Watch out (additions)
+- Export reuses the CPU `composite_rgba8` (shares all blend/adjustment handling with canvas).
+  ICC-tagged export deferred to Phase 6.
+
+## Previous session: 2026-06-13-z (spec 0032 — place image / INT-3 DONE; Phase 5 started)
 
 ### Done
 - **Spec 0032 ☑** — place image (INT-3): new dep **image 0.25** (png+jpeg) on atelier-io;
