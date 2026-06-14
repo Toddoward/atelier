@@ -3,7 +3,30 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-14-au (spec 0053 — persist embedded smart objects DONE)
+## Last session: 2026-06-14-av (spec 0054 — move smart objects DONE)
+
+### Done
+- **Spec 0054 ☑** — the Move tool now repositions a selected smart object: `SetOffset`
+  generalized from raster-only to `Raster | Smart` via an `offset_mut` helper; canvas
+  `movable_layer`/`layer_offset` accept either kind. One drag-coalesced, undoable history
+  entry (the compositor already honours `SmartContent.offset`). core 43 + app 53 tests green
+  (`set_offset_moves_smart_object_and_reverts`, `move_tool_drags_smart_object_offset`),
+  clippy clean, smoke clean.
+
+### Next
+1. **Edit smart-object contents** ("Edit Contents" → enter/return from the embedded doc;
+   needs an editor-context stack since the app is single-doc). Then smart-object
+   non-destructive **scale/rotate** (compositor currently only translates by integer offset).
+2. **Crisp-at-zoom vector re-rasterization** (spec 0051 follow-up).
+3. **INT-4 cross-paste** (needs multi-document support).
+4. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; big gated item).
+
+### Watch out (additions)
+- `SetOffset` is now kind-generic (`Raster | Smart`); `offset_mut` panics on any other kind —
+  keep that arm in sync if more offset-bearing kinds appear. Canvas raster-only paths call
+  `layer_offset` too (returns the same value for rasters).
+
+## Previous session: 2026-06-14-au (spec 0053 — persist embedded smart objects DONE)
 
 ### Done
 - **Spec 0053 ☑** — `.atl` schema **v3**: smart-object embedded pixels + embedded layer masks

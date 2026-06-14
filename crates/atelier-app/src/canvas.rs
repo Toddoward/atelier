@@ -170,9 +170,21 @@ fn handle_mask_paint(
     }
 }
 
-fn raster_offset(state: &EditorState, id: NodeId) -> [i32; 2] {
+/// Selected layer the Move tool can reposition: a visible, unlocked `Raster` or
+/// `Smart` node (spec 0054).
+fn movable_layer(state: &EditorState) -> Option<NodeId> {
+    let id = state.editor.selection?;
+    let node = state.editor.doc.node(id)?;
+    let movable = matches!(node.kind, NodeKind::Raster(_) | NodeKind::Smart(_))
+        && node.props.visible
+        && !node.props.locked;
+    movable.then_some(id)
+}
+
+fn layer_offset(state: &EditorState, id: NodeId) -> [i32; 2] {
     match &state.editor.doc.node(id).expect("checked").kind {
         NodeKind::Raster(c) => c.offset,
+        NodeKind::Smart(c) => c.offset,
         _ => [0, 0],
     }
 }
@@ -190,14 +202,14 @@ fn handle_tools(
 
     match state.tool {
         ActiveTool::Move => {
-            let Some(id) = editable_raster(state) else { return };
+            let Some(id) = movable_layer(state) else { return };
             if response.drag_started_by(egui::PointerButton::Primary) {
                 state.editor.history.set_merging(true);
             }
             if response.dragged_by(egui::PointerButton::Primary) {
                 let d = response.drag_delta();
                 if d != egui::Vec2::ZERO {
-                    let old = raster_offset(state, id);
+                    let old = layer_offset(state, id);
                     let new = [
                         old[0] + (d.x / vp.zoom).round() as i32,
                         old[1] + (d.y / vp.zoom).round() as i32,
@@ -235,7 +247,7 @@ fn handle_tools(
                 let Some(id) = editable_raster(state) else { return };
                 let Some(pos) = response.interact_pointer_pos() else { return };
                 let doc = pointer_doc(pos);
-                let off = raster_offset(state, id);
+                let off = layer_offset(state, id);
                 let p = [doc[0] - off[0] as f32, doc[1] - off[1] as f32];
                 let mut stroke =
                     StrokeState { layer: id, last: p, capture: Default::default(), erase };
@@ -246,7 +258,7 @@ fn handle_tools(
             } else if response.dragged_by(egui::PointerButton::Primary) {
                 let Some(mut stroke) = state.stroke.take() else { return };
                 if let Some(pos) = response.interact_pointer_pos() {
-                    let off = raster_offset(state, stroke.layer);
+                    let off = layer_offset(state, stroke.layer);
                     let doc = pointer_doc(pos);
                     let p = [doc[0] - off[0] as f32, doc[1] - off[1] as f32];
                     let last = stroke.last;
@@ -529,7 +541,7 @@ pub(crate) fn apply_bucket_for_test(state: &mut EditorState, seed: [i32; 2]) {
 fn apply_bucket(state: &mut EditorState, seed: [i32; 2]) {
     use atelier_core::{NodeKind, TILE_SIZE};
     let Some(id) = editable_raster(state) else { return };
-    let offset = raster_offset(state, id);
+    let offset = layer_offset(state, id);
     let size = state.editor.doc.size;
     let tol = state.brush.wand_tolerance;
     let color = state.brush.color;
@@ -578,7 +590,7 @@ pub(crate) fn apply_gradient_for_test(state: &mut EditorState, p0: [f32; 2], p1:
 fn apply_gradient(state: &mut EditorState, p0: [f32; 2], p1: [f32; 2]) {
     use atelier_core::{NodeKind, TILE_SIZE};
     let Some(id) = editable_raster(state) else { return };
-    let offset = raster_offset(state, id);
+    let offset = layer_offset(state, id);
     let fg = state.brush.color;
     let c0 = fg;
     let c1 = [fg[0], fg[1], fg[2], 0.0];

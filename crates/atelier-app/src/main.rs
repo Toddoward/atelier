@@ -2356,6 +2356,31 @@ mod ui_tests {
         assert_eq!(selected_raster(&h).offset, [0, 0], "single undo restores");
     }
 
+    /// Spec 0054: the Move tool repositions a selected smart object; undo restores.
+    #[test]
+    fn move_tool_drags_smart_object_offset() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        h.state_mut().convert_to_smart();
+        h.run();
+        let sel = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        click_label(&mut h, "Move (V)");
+        let smart_off = |h: &Harness<'static, AtelierApp>| {
+            match &h.state().state.as_ref().unwrap().editor.doc.node(sel).unwrap().kind {
+                atelier_core::NodeKind::Smart(c) => c.offset,
+                k => panic!("expected smart, got {}", k.kind_name()),
+            }
+        };
+        assert_eq!(smart_off(&h), [0, 0]);
+
+        pointer_drag(&mut h, CANVAS_A, CANVAS_B);
+        assert_ne!(smart_off(&h), [0, 0], "drag moved the smart object");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(smart_off(&h), [0, 0], "undo restores the smart object's offset");
+    }
+
     #[test]
     fn eraser_stroke_reduces_alpha_via_ui() {
         let mut h = harness();

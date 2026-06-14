@@ -184,6 +184,15 @@ fn raster_content_mut(doc: &mut Document, id: NodeId) -> &mut crate::RasterConte
     }
 }
 
+/// Mutable placement offset of a `Raster` or `Smart` node (spec 0054).
+fn offset_mut(doc: &mut Document, id: NodeId) -> &mut [i32; 2] {
+    match &mut doc.node_mut(id).expect("node present").kind {
+        crate::NodeKind::Raster(c) => &mut c.offset,
+        crate::NodeKind::Smart(c) => &mut c.offset,
+        _ => panic!("offset command on a node without an offset"),
+    }
+}
+
 /// Move a raster layer (offset in doc pixels). Mergeable: one history entry
 /// per move-tool drag.
 #[derive(Debug)]
@@ -197,7 +206,8 @@ impl SetOffset {
     pub fn new(doc: &Document, id: NodeId, new: [i32; 2]) -> Self {
         let old = match &doc.node(id).expect("node present").kind {
             crate::NodeKind::Raster(c) => c.offset,
-            _ => panic!("raster command on non-raster node"),
+            crate::NodeKind::Smart(c) => c.offset,
+            _ => panic!("offset command on a node without an offset"),
         };
         Self { id, old, new }
     }
@@ -208,10 +218,10 @@ impl Command for SetOffset {
         "Move Layer".into()
     }
     fn apply(&mut self, doc: &mut Document) {
-        raster_content_mut(doc, self.id).offset = self.new;
+        *offset_mut(doc, self.id) = self.new;
     }
     fn revert(&mut self, doc: &mut Document) {
-        raster_content_mut(doc, self.id).offset = self.old;
+        *offset_mut(doc, self.id) = self.old;
     }
     fn try_merge(&mut self, next: &dyn Any) -> bool {
         if let Some(n) = next.downcast_ref::<Self>() {
@@ -1094,6 +1104,31 @@ mod tests {
         assert!(doc.node(id).is_none());
         add.apply(&mut doc);
         assert!(doc.node(id).is_some());
+    }
+
+    #[test]
+    fn set_offset_moves_smart_object_and_reverts() {
+        use crate::SmartContent;
+        let mut doc = Document::new([32, 32], ProjectFocus::Raster);
+        let root = doc.root();
+        let inner = Document::new([32, 32], ProjectFocus::Raster);
+        let smart = Node::new(
+            LayerProps::named("smart"),
+            NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [0, 0] }),
+        );
+        let mut add = AddNode::new(&mut doc, smart, root, 0);
+        add.apply(&mut doc);
+        let id = add.id;
+
+        let mut cmd = SetOffset::new(&doc, id, [5, 7]);
+        cmd.apply(&mut doc);
+        let off = |d: &Document| match &d.node(id).unwrap().kind {
+            NodeKind::Smart(c) => c.offset,
+            _ => panic!("smart expected"),
+        };
+        assert_eq!(off(&doc), [5, 7], "smart object moved");
+        cmd.revert(&mut doc);
+        assert_eq!(off(&doc), [0, 0], "revert restores the smart object's offset");
     }
 
     fn raster_with_pixels() -> (Document, NodeId) {
