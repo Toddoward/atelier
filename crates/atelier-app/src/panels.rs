@@ -42,6 +42,10 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         ui.label("Tolerance");
         ui.add(egui::Slider::new(&mut state.brush.wand_tolerance, 0..=128));
     }
+    if state.tool == ActiveTool::Gradient {
+        ui.separator();
+        ui.checkbox(&mut state.brush.gradient_radial, "Radial");
+    }
     if state.tool.shape_kind().is_some() {
         ui.separator();
         ui.label("Fill");

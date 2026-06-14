@@ -3,7 +3,24 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-af (spec 0038 — paint bucket DONE)
+## Last session: 2026-06-13-ag (spec 0039 — radial gradient DONE)
+
+### Done
+- **Spec 0039 ☑** — radial gradient: `gradient_region_radial` + `BrushSettings.gradient_radial`
+  toggle (Tools panel); `apply_gradient` dispatches linear/radial. raster +1 / app 42 tests
+  green, clippy clean, smoke clean. RAS-9 fills now: solid/linear/radial/flood (patterns left).
+
+### Next
+1. **Pattern fill** + multi-stop/angular gradients (RAS-9 polish, no dep).
+2. **INT-4 cross-paste**, **smart objects** (DOC-5), **z-interleaved compositing** (Phase 5).
+3. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; verify
+   cross-platform — the big gated item).
+
+### Watch out (additions)
+- Gradient tool has a Radial toggle in `BrushSettings.gradient_radial`; both modes share the
+  drag + PaintTiles plumbing.
+
+## Previous session: 2026-06-13-af (spec 0038 — paint bucket DONE)
 
 ### Done
 - **Spec 0038 ☑** — Paint Bucket tool (key `K`): `apply_bucket` composes `magic_wand` (flood

@@ -17,7 +17,7 @@ pub use adjust::{apply_tile, target_tiles, Adjustment};
 pub use blend::{blend_rgb, dissolve_keeps};
 pub use brush::{segment_tiles, stamp_segment, stamp_segment_clipped, BrushParams};
 pub use compositor::composite_rgba8;
-pub use fill::{fill_region, gradient_region};
+pub use fill::{fill_region, gradient_region, gradient_region_radial};
 pub use raster_vector::rasterize_vector;
 pub use resample::{resample_layer, sample_bilinear, transform_layer};
 

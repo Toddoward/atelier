@@ -491,6 +491,12 @@ fn apply_bucket(state: &mut EditorState, seed: [i32; 2]) {
     state.editor.history.push_committed(Box::new(cmd));
 }
 
+/// Test hook for the gradient (linear or radial per brush.gradient_radial).
+#[cfg(test)]
+pub(crate) fn apply_gradient_for_test(state: &mut EditorState, p0: [f32; 2], p1: [f32; 2]) {
+    apply_gradient(state, p0, p1);
+}
+
 /// Fill the selection (or whole layer) of the selected raster layer with a
 /// foreground→transparent linear gradient along `p0`→`p1` (doc space). Undoable.
 fn apply_gradient(state: &mut EditorState, p0: [f32; 2], p1: [f32; 2]) {
@@ -521,8 +527,17 @@ fn apply_gradient(state: &mut EditorState, p0: [f32; 2], p1: [f32; 2]) {
             }
         }
     }
+    let radial = state.brush.gradient_radial;
     if let NodeKind::Raster(c) = &mut state.editor.doc.node_mut(id).expect("checked").kind {
-        atelier_raster::gradient_region(&mut c.tiles, c0, c1, p0, p1, offset, region, mask.as_deref());
+        if radial {
+            atelier_raster::gradient_region_radial(
+                &mut c.tiles, c0, c1, p0, p1, offset, region, mask.as_deref(),
+            );
+        } else {
+            atelier_raster::gradient_region(
+                &mut c.tiles, c0, c1, p0, p1, offset, region, mask.as_deref(),
+            );
+        }
     }
     let cmd =
         atelier_core::command::PaintTiles::from_capture(&state.editor.doc, id, "Gradient", before);

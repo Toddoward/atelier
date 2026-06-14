@@ -87,9 +87,66 @@ pub fn gradient_region(
     }
 }
 
+/// Like [`gradient_region`] but radial: `c0` at `center` (= p0) fading to `c1`
+/// at radius `|p1 − p0|`.
+#[allow(clippy::too_many_arguments)]
+pub fn gradient_region_radial(
+    tiles: &mut TileMap,
+    c0: [f32; 4],
+    c1: [f32; 4],
+    center: [f32; 2],
+    edge: [f32; 2],
+    offset: [i32; 2],
+    region: [i32; 4],
+    mask: Option<&Mask>,
+) {
+    let radius = {
+        let (dx, dy) = (edge[0] - center[0], edge[1] - center[1]);
+        (dx * dx + dy * dy).sqrt().max(1e-3)
+    };
+    for y in region[1]..region[3] {
+        for x in region[0]..region[2] {
+            let cov = mask.map_or(255u8, |m| m.get(x, y));
+            if cov == 0 {
+                continue;
+            }
+            let (dx, dy) = (x as f32 + 0.5 - center[0], y as f32 + 0.5 - center[1]);
+            let t = ((dx * dx + dy * dy).sqrt() / radius).clamp(0.0, 1.0);
+            let col = [
+                c0[0] + (c1[0] - c0[0]) * t,
+                c0[1] + (c1[1] - c0[1]) * t,
+                c0[2] + (c1[2] - c0[2]) * t,
+                c0[3] + (c1[3] - c0[3]) * t,
+            ];
+            let (lx, ly) = (x - offset[0], y - offset[1]);
+            let out = src_over(tiles.pixel(lx, ly), col, cov as f32 / 255.0);
+            tiles.set_pixel(lx, ly, out);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radial_gradient_is_brightest_at_center() {
+        let mut t = TileMap::new();
+        gradient_region_radial(
+            &mut t,
+            [1.0, 0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [5.0, 5.0],
+            [15.0, 5.0], // radius 10
+            [0, 0],
+            [0, 0, 20, 20],
+            None,
+        );
+        let center = t.pixel(5, 5)[3];
+        let mid = t.pixel(10, 5)[3];
+        let edge = t.pixel(14, 5)[3];
+        assert!(center > 230 && mid < center && edge < mid, "{center} {mid} {edge}");
+    }
 
     #[test]
     fn fills_region_unclipped() {

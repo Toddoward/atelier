@@ -87,6 +87,8 @@ pub struct BrushSettings {
     pub wand_tolerance: u8,
     /// Fill color for newly drawn vector shapes.
     pub vector_fill: [f32; 4],
+    /// Gradient tool: radial instead of linear.
+    pub gradient_radial: bool,
 }
 
 impl Default for BrushSettings {
@@ -97,6 +99,7 @@ impl Default for BrushSettings {
             color: [0.1, 0.1, 0.1, 1.0],
             wand_tolerance: 32,
             vector_fill: [0.2, 0.5, 0.9, 1.0],
+            gradient_radial: false,
         }
     }
 }
@@ -2345,6 +2348,39 @@ mod ui_tests {
 
         send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
         assert_eq!(pixel(&h, 2, 2), [255, 0, 0, 255], "undo restored red");
+    }
+
+    /// Spec 0039: radial gradient is brightest at the drag start (center).
+    #[test]
+    fn radial_gradient_center_brighter_than_edge() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                c.tiles = atelier_core::TileMap::new();
+            }
+            st.brush.color = [1.0, 0.0, 0.0, 1.0];
+            st.brush.gradient_radial = true;
+        }
+        // Center at (20,20), radius 20.
+        canvas::apply_gradient_for_test(
+            h.state_mut().state.as_mut().unwrap(),
+            [20.0, 20.0],
+            [40.0, 20.0],
+        );
+        h.run();
+        let alpha = |h: &Harness<'static, AtelierApp>, x: i32, y: i32| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Raster(c) => c.tiles.pixel(x, y)[3],
+                _ => panic!(),
+            }
+        };
+        assert!(alpha(&h, 20, 20) > alpha(&h, 35, 20), "center brighter than edge");
+        assert!(alpha(&h, 20, 20) > 200, "center near-opaque");
     }
 
     /// Spec 0037: gradient fill across a layer (foreground→transparent); undoable.
