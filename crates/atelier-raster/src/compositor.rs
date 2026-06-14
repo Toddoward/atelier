@@ -146,6 +146,16 @@ fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
             };
             blend_onto(backdrop, &src, props.blend, props.opacity);
         }
+        NodeKind::Vector(content) => {
+            // Rasterize the vector layer (doc space, up to the region's far edge)
+            // and blend it in tree order so vectors interleave with rasters
+            // (spec 0051). The doc-space tiles are sampled/clipped to the region.
+            let w = (backdrop.origin[0] + backdrop.w as i32).max(0) as u32;
+            let h = (backdrop.origin[1] + backdrop.h as i32).max(0) as u32;
+            let vt = crate::rasterize_vector(content, w, h);
+            let src = TileSource { tiles: &vt, offset: [0, 0], mask: None };
+            blend_onto(backdrop, &src, props.blend, props.opacity);
+        }
         NodeKind::Adjustment(adj) => {
             adjust_backdrop(backdrop, *adj, props.opacity);
         }
@@ -293,6 +303,30 @@ mod tests {
         assert_eq!(px(&out, 8, 0, 0), [255, 0, 0, 255]);
         assert_eq!(px(&out, 8, 3, 3), [255, 0, 0, 255]);
         assert_eq!(px(&out, 8, 4, 4), [0, 0, 0, 0], "outside the filled rect");
+    }
+
+    #[test]
+    fn vector_layer_interleaves_in_z_order() {
+        use atelier_core::atelier_vector::{Path, Shape};
+        use atelier_core::VectorContent;
+        let mut doc = Document::new([8, 8], ProjectFocus::Vector);
+        let root = doc.root();
+        // Bottom: blue raster covering the whole canvas.
+        add(&mut doc, solid_layer("blue", [0.0, 0.0, 8.0, 8.0], [0.0, 0.0, 1.0, 1.0]), root, 0);
+        // Middle: green vector rect over the whole canvas, above the blue raster.
+        let vec_node = Node::new(
+            LayerProps::named("vec"),
+            NodeKind::Vector(VectorContent {
+                shapes: vec![Shape::filled(Path::rect(0.0, 0.0, 8.0, 8.0), [0.0, 1.0, 0.0, 1.0])],
+            }),
+        );
+        add(&mut doc, vec_node, root, 0);
+        // Top: red raster covering only the top-left quadrant, above the vector.
+        add(&mut doc, solid_layer("red", [0.0, 0.0, 4.0, 4.0], [1.0, 0.0, 0.0, 1.0]), root, 0);
+
+        let out = composite_rgba8(&doc, 8, 8);
+        assert_eq!(px(&out, 8, 2, 2), [255, 0, 0, 255], "raster wins above the vector");
+        assert_eq!(px(&out, 8, 6, 6), [0, 255, 0, 255], "vector wins above the raster");
     }
 
     #[test]

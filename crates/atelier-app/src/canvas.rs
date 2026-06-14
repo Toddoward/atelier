@@ -851,9 +851,8 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
         egui::StrokeKind::Outside,
     );
 
-    // Vector layers: tessellated meshes (cached per revision), mapped to screen
-    // and painted over the raster composite (spec 0013).
-    paint_vector_layers(&painter, rect, vp, state);
+    // Vector layers now composite inline (spec 0051), so they're already in the
+    // document texture above — no separate overlay.
 
     // Selection: marching ants (cached per revision) + live drag preview.
     if let Some(mask) = &state.editor.doc.selection {
@@ -985,65 +984,6 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
                 );
             }
         }
-    }
-}
-
-/// Tessellate (cached per revision) and paint vector layers, mapped to screen.
-fn paint_vector_layers(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    vp: &Viewport,
-    state: &mut EditorState,
-) {
-    use atelier_core::atelier_vector::{tessellate, Mesh as VMesh};
-
-    let rev = state.editor.history.revision();
-    let stale = state.vector_cache.as_ref().is_none_or(|(r, _)| *r != rev);
-    if stale {
-        let mut layers: Vec<(NodeId, VMesh)> = Vec::new();
-        // Bottom-first paint order.
-        for (id, _) in state.editor.doc.iter_tree().into_iter().rev() {
-            let Some(node) = state.editor.doc.node(id) else { continue };
-            if !node.props.visible {
-                continue;
-            }
-            if let NodeKind::Vector(content) = &node.kind {
-                let mut merged = VMesh::default();
-                for shape in &content.shapes {
-                    let m = tessellate(shape);
-                    let base = merged.vertices.len() as u32;
-                    merged.vertices.extend(m.vertices);
-                    merged.indices.extend(m.indices.iter().map(|i| i + base));
-                }
-                if !merged.is_empty() {
-                    layers.push((id, merged));
-                }
-            }
-        }
-        state.vector_cache = Some((rev, layers));
-    }
-
-    let Some((_, layers)) = &state.vector_cache else { return };
-    for (id, mesh) in layers {
-        let opacity = state.editor.doc.node(*id).map(|n| n.props.opacity).unwrap_or(1.0);
-        let mut em = egui::epaint::Mesh::default();
-        em.vertices.reserve(mesh.vertices.len());
-        for v in &mesh.vertices {
-            let s = vp.doc_to_screen(v.pos);
-            let c = v.color;
-            em.vertices.push(egui::epaint::Vertex {
-                pos: rect.min + egui::vec2(s[0], s[1]),
-                uv: egui::epaint::WHITE_UV,
-                color: egui::Color32::from_rgba_unmultiplied(
-                    (c[0] * 255.0) as u8,
-                    (c[1] * 255.0) as u8,
-                    (c[2] * 255.0) as u8,
-                    (c[3] * opacity * 255.0) as u8,
-                ),
-            });
-        }
-        em.indices = mesh.indices.clone();
-        painter.add(egui::Shape::mesh(em));
     }
 }
 

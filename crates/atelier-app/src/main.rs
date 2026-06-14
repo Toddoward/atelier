@@ -135,9 +135,6 @@ pub struct EditorState {
     /// Pending magic-wand click (doc pixel, shift, alt) — drained by the app
     /// loop into `magic_wand_at` (canvas can't borrow the app helper).
     pub wand_click: Option<([i32; 2], bool, bool)>,
-    /// Tessellated vector-layer meshes (doc space), cached by history revision
-    /// (spec 0013). Re-tessellate only on document change.
-    pub vector_cache: Option<(u64, Vec<(NodeId, atelier_core::atelier_vector::Mesh)>)>,
     /// Pending shape insertion (kind, doc min, doc max) from a shape-tool drag
     /// — drained by the app loop into `add_shape_layer` (spec 0014/0015).
     pub pending_shape: Option<(ShapeKind, [f32; 2], [f32; 2])>,
@@ -304,7 +301,6 @@ impl AtelierApp {
                     select_drag: None,
                     ants: None,
                     wand_click: None,
-                    vector_cache: None,
                     pending_shape: None,
                     selected_extra: Vec::new(),
                     pattern: None,
@@ -1640,7 +1636,6 @@ impl AtelierApp {
                     select_drag: None,
                     ants: None,
                     wand_click: None,
-                    vector_cache: None,
                     pending_shape: None,
                     selected_extra: Vec::new(),
                     pattern: None,
@@ -3712,11 +3707,10 @@ mod ui_tests {
         }
     }
 
-    /// Spec 0008: Invert via menu mutates the selected layer's pixels + undoable.
-    /// Spec 0013: a vector layer tessellates into a cached, non-empty mesh that
-    /// invalidates on revision change.
+    /// Spec 0051: a vector layer composites inline (in the document composite),
+    /// in correct z-order with raster layers.
     #[test]
-    fn vector_layer_tessellates_and_caches() {
+    fn vector_layer_composites_inline() {
         use atelier_core::atelier_vector::{Path, Shape};
         use atelier_core::VectorContent;
         let mut h = harness();
@@ -3725,7 +3719,7 @@ mod ui_tests {
             let st = h.state_mut().state.as_mut().unwrap();
             let root = st.editor.doc.root();
             let content = VectorContent {
-                shapes: vec![Shape::filled(Path::rect(4.0, 4.0, 20.0, 20.0), [0.0, 0.7, 0.9, 1.0])],
+                shapes: vec![Shape::filled(Path::rect(4.0, 4.0, 20.0, 20.0), [0.0, 1.0, 0.0, 1.0])],
             };
             let cmd = atelier_core::command::AddNode::new(
                 &mut st.editor.doc,
@@ -3739,15 +3733,13 @@ mod ui_tests {
             st.editor.apply(Box::new(cmd));
         }
         h.run();
-
-        let (rev, layers) = h.state().state.as_ref().unwrap().vector_cache.clone().unwrap();
-        assert_eq!(layers.len(), 1, "one vector layer cached");
-        assert!(!layers[0].1.is_empty(), "tessellated to triangles");
-
-        click_label(&mut h, "+ Layer");
-        h.run();
-        let rev2 = h.state().state.as_ref().unwrap().vector_cache.as_ref().unwrap().0;
-        assert_ne!(rev, rev2, "cache invalidated on revision change");
+        let doc = &h.state().state.as_ref().unwrap().editor.doc;
+        let [w, hh] = doc.size;
+        let rgba = atelier_raster::composite_rgba8(doc, w, hh);
+        let i = ((10 * w + 10) * 4) as usize; // inside the rect
+        assert_eq!(&rgba[i..i + 4], &[0, 255, 0, 255], "vector rect in the composite");
+        let o = ((40 * w + 40) * 4) as usize; // outside
+        assert_eq!(rgba[o + 3], 0, "transparent outside the shape");
     }
 
     /// Spec 0010: numeric transform bakes the layer; undo restores exactly.

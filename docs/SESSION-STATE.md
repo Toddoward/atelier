@@ -3,7 +3,31 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ar (spec 0050 — paint on mask DONE; **layer masks complete**)
+## Last session: 2026-06-14-as (spec 0051 — z-interleaved vector compositing DONE)
+
+### Done
+- **Spec 0051 ☑** — vector layers now composite through the CPU compositor in tree z-order:
+  `composite_node` gains a `NodeKind::Vector` arm (`rasterize_vector` → `blend_onto`).
+  Removed the old `paint_vector_layers` egui overlay + `vector_cache` field/cache; canvas
+  shows vectors straight from the document composite texture. **Fixes a data-loss bug**:
+  export/flatten/merge previously dropped vector layers. raster 47 + app 51 tests green
+  (`vector_layer_interleaves_in_z_order`, `vector_layer_composites_inline`), clippy clean,
+  smoke clean.
+
+### Next
+1. **Smart objects** (DOC-5 — embedded Box<Document> + recursive compositor + .atl parts;
+   sizable, closes last R-14 item).
+2. **INT-4 cross-paste**; crisp-at-zoom vector re-rasterization follow-up (see spec 0051 Out
+   of scope — vectors currently rasterize at doc resolution in the composite).
+3. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; verify
+   cross-platform — big gated item).
+
+### Watch out (additions)
+- Vectors composite at **document resolution** into the composite texture now (no re-sharpen
+  past 100% zoom). Crisp-zoom path is a deliberate follow-up, not a regression.
+- GPU compositor still doesn't handle the vector arm (CPU only) — tracked under R-13.
+
+## Previous session: 2026-06-13-ar (spec 0050 — paint on mask DONE; **layer masks complete**)
 
 ### Done
 - **Spec 0050 ☑** — paint-on-mask: `brush::stamp_mask_segment` + `mask_edit` toggle; canvas
