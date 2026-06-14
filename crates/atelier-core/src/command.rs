@@ -316,6 +316,44 @@ impl Command for SetSelection {
     }
 }
 
+/// Set or clear a raster layer's mask (spec 0047). Undoable.
+#[derive(Debug)]
+pub struct SetLayerMask {
+    pub id: NodeId,
+    old: Option<crate::Mask>,
+    new: Option<crate::Mask>,
+}
+
+impl SetLayerMask {
+    pub fn new(doc: &Document, id: NodeId, new: Option<crate::Mask>) -> Self {
+        let old = match &doc.node(id).expect("node present").kind {
+            crate::NodeKind::Raster(c) => c.mask.clone(),
+            _ => None,
+        };
+        Self { id, old, new }
+    }
+    fn set(&self, doc: &mut Document, m: Option<crate::Mask>) {
+        if let Some(crate::NodeKind::Raster(c)) = doc.node_mut(self.id).map(|n| &mut n.kind) {
+            c.mask = m;
+        }
+    }
+}
+
+impl Command for SetLayerMask {
+    fn label(&self) -> String {
+        "Layer Mask".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.set(doc, self.new.clone());
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        self.set(doc, self.old.clone());
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Edit an adjustment layer's parameters (Properties panel — spec 0009).
 #[derive(Debug)]
 pub struct SetAdjustment {
@@ -1007,7 +1045,7 @@ mod tests {
         tiles.fill_rect(0, 0, 16, 16, [9, 9, 9, 255]);
         let node = Node::new(
             LayerProps::named("r"),
-            NodeKind::Raster(crate::RasterContent { art: None, offset: [0, 0], tiles }),
+            NodeKind::Raster(crate::RasterContent { tiles, ..Default::default() }),
         );
         let mut add = AddNode::new(&mut doc, node, root, 0);
         add.apply(&mut doc);

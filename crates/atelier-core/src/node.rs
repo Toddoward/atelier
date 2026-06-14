@@ -58,6 +58,10 @@ pub struct RasterContent {
     /// the loader reattaches them after deserialization.
     #[serde(skip)]
     pub tiles: TileMap,
+    /// Optional layer mask (doc-space coverage; multiplies layer alpha).
+    /// Spec 0047. Session-only for now (not persisted).
+    #[serde(skip)]
+    pub mask: Option<crate::Mask>,
 }
 
 impl RasterContent {
@@ -79,7 +83,7 @@ impl RasterContent {
             (y + h).round() as i32,
             rgba,
         );
-        Self { art: Some(art), offset: [0, 0], tiles }
+        Self { art: Some(art), offset: [0, 0], tiles, mask: None }
     }
 }
 

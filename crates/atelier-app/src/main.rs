@@ -573,6 +573,26 @@ impl AtelierApp {
         st.editor.selection = Some(id);
     }
 
+    /// Add a layer mask to the selected raster layer from the current selection
+    /// (or fully-opaque if none); or clear it. Undoable (spec 0047).
+    fn set_layer_mask(&mut self, from_selection: bool) {
+        use atelier_core::NodeKind;
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        if !matches!(st.editor.doc.node(id).map(|n| &n.kind), Some(NodeKind::Raster(_))) {
+            return;
+        }
+        let new = if !from_selection {
+            None
+        } else if let Some(sel) = st.editor.doc.selection.clone() {
+            Some((*sel).clone())
+        } else {
+            return; // add-from-selection with no selection: nothing to do
+        };
+        let cmd = atelier_core::command::SetLayerMask::new(&st.editor.doc, id, new);
+        st.editor.apply(Box::new(cmd));
+    }
+
     /// Build a document selection from the selected layer's alpha (INT-5,
     /// spec 0044): raster uses its tiles' alpha, vector is rasterized. Undoable.
     fn selection_from_layer(&mut self) {
@@ -1329,6 +1349,29 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.merge_down();
+                        ui.close_menu();
+                    }
+                    let raster_sel = self.state.as_ref().is_some_and(|s| {
+                        s.editor.selection.and_then(|id| s.editor.doc.node(id)).is_some_and(|n| {
+                            matches!(n.kind, atelier_core::NodeKind::Raster(_))
+                        })
+                    });
+                    let has_dsel = self
+                        .state
+                        .as_ref()
+                        .is_some_and(|s| s.editor.doc.selection.is_some());
+                    if ui
+                        .add_enabled(raster_sel && has_dsel, egui::Button::new("Add Layer Mask from Selection"))
+                        .clicked()
+                    {
+                        self.set_layer_mask(true);
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(raster_sel, egui::Button::new("Remove Layer Mask"))
+                        .clicked()
+                    {
+                        self.set_layer_mask(false);
                         ui.close_menu();
                     }
                     if ui.add_enabled(has, egui::Button::new("Merge Visible")).clicked() {
@@ -2882,6 +2925,49 @@ mod ui_tests {
             n0,
             "undo removed traced layer"
         );
+    }
+
+    /// Spec 0047: layer mask from selection hides the unmasked area; undo restores.
+    #[test]
+    fn layer_mask_from_selection_and_undo() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(0, 0, 16, 16, [255, 0, 0, 255]);
+                c.tiles = t;
+            }
+            // Mask = left half only.
+            let mut m = atelier_core::Mask::new();
+            for y in 0..16 {
+                for x in 0..8 {
+                    m.set(x, y, 255);
+                }
+            }
+            let cmd = atelier_core::command::SetSelection::new(
+                &st.editor.doc,
+                Some(std::sync::Arc::new(m)),
+                "sel",
+            );
+            st.editor.apply(Box::new(cmd));
+        }
+        h.state_mut().set_layer_mask(true);
+        h.run();
+        let composite_alpha = |h: &Harness<'static, AtelierApp>, x: u32, y: u32| {
+            let doc = &h.state().state.as_ref().unwrap().editor.doc;
+            let [w, hh] = doc.size;
+            let rgba = atelier_raster::composite_rgba8(doc, w, hh);
+            rgba[((y * w + x) * 4 + 3) as usize]
+        };
+        assert_eq!(composite_alpha(&h, 4, 4), 255, "masked-in area visible");
+        assert_eq!(composite_alpha(&h, 12, 4), 0, "outside mask hidden");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(composite_alpha(&h, 12, 4), 255, "undo removed mask → full layer visible");
     }
 
     /// Spec 0044: build a selection from a layer's alpha (raster and vector).

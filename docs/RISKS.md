@@ -82,6 +82,15 @@ uses it — so users see correct output. When the GPU compositor is wired to the
 slice), adjustment math must be ported to WGSL and golden fixtures extended to cover
 adjustment layers before that switch flips. Tracked; do not wire GPU→canvas until closed.
 
+## R-14 · Session-only data not yet persisted in `.atl`
+Several non-JSON payloads are `#[serde(skip)]` and not yet written to the `.atl` container:
+raster layer masks (spec 0047) and (future) smart-object embedded sub-documents. Raster
+*tiles* are skipped too but ARE saved via binary parts (schema v1); masks/embedded docs are
+not. **Mitigation:** these are session-only today; before any format freeze (Phase 7) the
+`.atl` writer/reader must add parts for masks (and embedded smart-object docs) with a schema
+bump + migration, or the save path must report them in the degradation report. Tracked; do
+not freeze `.atl` until closed.
+
 ## Plan-review verdict
 Goal is sound and achievable **as tiered**: the original prompt's flexibility clauses
 (fallback platform floor, "would be great" phrasing on AI/3D/parity items, explicit

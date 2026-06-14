@@ -3,7 +3,27 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-an (spec 0046 — clipping masks DONE)
+## Last session: 2026-06-13-ao (spec 0047 — layer masks DONE)
+
+### Done
+- **Spec 0047 ☑** — layer masks (DOC-4): `RasterContent.mask: Option<Mask>` (serde-skip),
+  compositor multiplies layer alpha by mask coverage; `SetLayerMask` command + Layer menu
+  (Add from Selection / Remove). Session-only persistence (R-14 logged). app 49 tests green,
+  clippy clean, smoke clean.
+
+### Next
+1. **Paint-on-mask** edit mode (brush edits the active layer mask); **smart objects** (DOC-5).
+2. **`.atl` persistence for masks + smart-object docs** (R-14 — needed before Phase-7 freeze).
+3. **z-interleaved compositing**, **INT-4 cross-paste**, **Phase 6 color management** (lcms2 —
+   liblcms2-dev on ubuntu CI or vendor; verify cross-platform — big gated item).
+
+### Watch out (additions)
+- New R-14: masks (and future embedded smart-object docs) are serde-skip / session-only; the
+  `.atl` writer must add parts for them before any format freeze.
+- Adding fields to RasterContent: update the one explicit struct literal (command.rs) — most
+  sites use `..Default::default()`.
+
+## Previous session: 2026-06-13-an (spec 0046 — clipping masks DONE)
 
 ### Done
 - **Spec 0046 ☑** — clipping masks (DOC-4): CPU compositor clips a run of `clip` raster

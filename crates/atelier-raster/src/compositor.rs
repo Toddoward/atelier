@@ -41,12 +41,18 @@ trait Source {
 struct TileSource<'a> {
     tiles: &'a atelier_core::TileMap,
     offset: [i32; 2],
+    /// Optional doc-space layer mask multiplying alpha (spec 0047).
+    mask: Option<&'a atelier_core::Mask>,
 }
 
 impl Source for TileSource<'_> {
     fn sample(&self, x: i32, y: i32) -> [f32; 4] {
         let [r, g, b, a] = self.tiles.pixel(x - self.offset[0], y - self.offset[1]);
-        [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0]
+        let mut a = a as f32 / 255.0;
+        if let Some(m) = self.mask {
+            a *= m.get(x, y) as f32 / 255.0;
+        }
+        [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a]
     }
 }
 
@@ -133,7 +139,11 @@ fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
     let props = &node.props;
     match &node.kind {
         NodeKind::Raster(content) => {
-            let src = TileSource { tiles: &content.tiles, offset: content.offset };
+            let src = TileSource {
+                tiles: &content.tiles,
+                offset: content.offset,
+                mask: content.mask.as_ref(),
+            };
             blend_onto(backdrop, &src, props.blend, props.opacity);
         }
         NodeKind::Adjustment(adj) => {
@@ -157,7 +167,11 @@ fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
 fn render_raster_isolated(doc: &Document, id: NodeId, w: usize, h: usize, origin: [i32; 2]) -> Buffer {
     let mut buf = Buffer::transparent(w, h, origin);
     if let Some(NodeKind::Raster(content)) = doc.node(id).map(|n| &n.kind) {
-        let src = TileSource { tiles: &content.tiles, offset: content.offset };
+        let src = TileSource {
+            tiles: &content.tiles,
+            offset: content.offset,
+            mask: content.mask.as_ref(),
+        };
         let opacity = doc.node(id).expect("present").props.opacity;
         blend_onto(&mut buf, &src, BlendMode::Normal, opacity);
     }
