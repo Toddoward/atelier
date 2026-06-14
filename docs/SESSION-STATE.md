@@ -3,7 +3,28 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-y (spec 0031 — boolean path ops DONE; **PHASE 4 COMPLETE**)
+## Last session: 2026-06-13-z (spec 0032 — place image / INT-3 DONE; Phase 5 started)
+
+### Done
+- **Spec 0032 ☑** — place image (INT-3): new dep **image 0.25** (png+jpeg) on atelier-io;
+  `image_io` (`DecodedImage`, `decode_image`/`load_image`); `TileMap::from_rgba`; app
+  `place_image` / `place_image_dialog` (File → Place Image…) inserts a raster layer
+  (undoable). io 10 / app 36 tests green, clippy clean, smoke clean.
+
+### Next — Phase 5 continues
+1. **Interactive place** (position/scale of the placed image) + remaining FMT-4 formats
+   (TIFF/WebP/GIF/BMP — `image` features).
+2. **INT-4 cross-paste** pixels/paths; **smart objects** (DOC-5, embedded sub-doc +
+   non-destructive transform — uses ReplaceNodeKind / InsertSubtree groundwork).
+3. **z-interleaved raster+vector compositing** (vectors currently overlay the raster
+   composite; needs canvas render reorder or compositor rasterizing vectors inline — design pass).
+4. Or pivot to **Phase 6 color management** (lcms2).
+
+### Watch out (additions)
+- Placed image lands at doc origin, unscaled. `TileMap::from_rgba` skips transparent pixels.
+- `image` crate decode is in atelier-io; keep ICC handling for Phase 6.
+
+## Previous session: 2026-06-13-y (spec 0031 — boolean path ops DONE; **PHASE 4 COMPLETE**)
 
 ### Done
 - **Spec 0031 ☑** — boolean Pathfinder (VEC-5): new dep **i_overlay 2.2.0** in atelier-vector;

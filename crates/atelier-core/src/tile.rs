@@ -103,6 +103,23 @@ impl TileMap {
         self.tiles.remove(&coord);
     }
 
+    /// Build a tile map from a `w×h` straight-alpha RGBA8 buffer at doc origin
+    /// (transparent pixels skipped). Used by Place (spec 0032).
+    pub fn from_rgba(width: u32, height: u32, rgba: &[u8]) -> Self {
+        let mut map = Self::new();
+        let w = width as usize;
+        for y in 0..height as i32 {
+            for x in 0..width as i32 {
+                let i = (y as usize * w + x as usize) * 4;
+                let px = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
+                if px[3] != 0 {
+                    map.set_pixel(x, y, px);
+                }
+            }
+        }
+        map
+    }
+
     fn split(doc_x: i32, doc_y: i32) -> (TileCoord, usize, usize) {
         let tx = doc_x.div_euclid(TILE_SIZE as i32);
         let ty = doc_y.div_euclid(TILE_SIZE as i32);

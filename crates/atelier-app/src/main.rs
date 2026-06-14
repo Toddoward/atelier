@@ -504,6 +504,49 @@ impl AtelierApp {
         }
     }
 
+    /// Insert a decoded image as a new raster layer above the selection (INT-3).
+    fn place_image(&mut self, img: atelier_io::DecodedImage) {
+        use atelier_core::{LayerProps, Node, NodeKind, RasterContent, TileMap};
+        let Some(st) = &mut self.state else { return };
+        let tiles = TileMap::from_rgba(img.width, img.height, &img.rgba);
+        let content = RasterContent { tiles, ..Default::default() };
+        let doc = &st.editor.doc;
+        let (parent, index) = match st.editor.selection.and_then(|s| doc.node(s).map(|n| (s, n))) {
+            Some((sel, n)) => {
+                let parent = n.parent.unwrap_or(doc.root());
+                let index = doc.children(parent).iter().position(|&c| c == sel).unwrap_or(0);
+                (parent, index)
+            }
+            None => (doc.root(), 0),
+        };
+        let cmd = atelier_core::command::AddNode::new(
+            &mut st.editor.doc,
+            Node::new(LayerProps::named("Placed Image"), NodeKind::Raster(content)),
+            parent,
+            index,
+        );
+        let id = cmd.id;
+        st.editor.apply(Box::new(cmd));
+        st.editor.selection = Some(id);
+    }
+
+    /// File → Place: pick an image file and place it (INT-3).
+    fn place_image_dialog(&mut self) {
+        if self.state.is_none() {
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg"])
+            .pick_file()
+        else {
+            return;
+        };
+        match atelier_io::load_image(&path) {
+            Ok(img) => self.place_image(img),
+            Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+
     /// Copy the selected layer (remembers the source node for paste).
     fn copy_selected_layer(&mut self) {
         if let Some(st) = &mut self.state {
@@ -829,6 +872,10 @@ impl AtelierApp {
                     }
                     ui.separator();
                     let has_doc = self.state.is_some();
+                    if ui.add_enabled(has_doc, egui::Button::new("Place Image…")).clicked() {
+                        self.place_image_dialog();
+                        ui.close_menu();
+                    }
                     if ui.add_enabled(has_doc, egui::Button::new("Save\t(Ctrl+S)")).clicked() {
                         self.save(false);
                         ui.close_menu();
@@ -1953,6 +2000,41 @@ mod ui_tests {
         }
         h.run();
         h.run();
+    }
+
+    /// Spec 0032: place a decoded image as a raster layer; undo removes it.
+    #[test]
+    fn place_image_adds_raster_layer_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+        // 2×2 image: top-left red opaque, rest transparent.
+        let img = atelier_io::DecodedImage {
+            width: 2,
+            height: 2,
+            rgba: vec![
+                255, 0, 0, 255, 0, 0, 0, 0, // row 0
+                0, 0, 0, 0, 0, 0, 0, 0, // row 1
+            ],
+        };
+        h.state_mut().place_image(img);
+        h.run();
+        let st = h.state().state.as_ref().unwrap();
+        assert_eq!(st.editor.doc.node_count(), n0 + 1, "placed layer added");
+        let id = st.editor.selection.unwrap();
+        match &st.editor.doc.node(id).unwrap().kind {
+            NodeKind::Raster(c) => {
+                assert_eq!(c.tiles.pixel(0, 0), [255, 0, 0, 255], "red pixel placed");
+                assert_eq!(c.tiles.pixel(1, 1), [0, 0, 0, 0], "transparent skipped");
+            }
+            k => panic!("expected raster, got {}", k.kind_name()),
+        }
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0,
+            "undo removed placed layer"
+        );
     }
 
     /// Spec 0030: copy a layer and paste a fresh independent copy; undo removes.

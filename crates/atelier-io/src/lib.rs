@@ -4,5 +4,7 @@
 //! Phase 2 adds binary tile parts.
 
 pub mod atl;
+pub mod image_io;
 
 pub use atl::{load_atl, save_atl, AtlError, SCHEMA_VERSION};
+pub use image_io::{decode_image, load_image, DecodedImage, ImageError};
