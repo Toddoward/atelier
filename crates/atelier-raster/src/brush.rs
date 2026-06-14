@@ -85,6 +85,38 @@ pub fn stamp_segment_clipped(
     }
 }
 
+/// Paint into a layer mask (doc space): brush reveals (raises coverage toward
+/// 255), eraser hides (scales coverage down). Spec 0050.
+pub fn stamp_mask_segment(
+    mask: &mut Mask,
+    from: [f32; 2],
+    to: [f32; 2],
+    radius: f32,
+    hardness: f32,
+    erase: bool,
+) {
+    for center in stamp_centers(from, to, radius) {
+        let (x0, x1) = ((center[0] - radius).floor() as i32, (center[0] + radius).ceil() as i32);
+        let (y0, y1) = ((center[1] - radius).floor() as i32, (center[1] + radius).ceil() as i32);
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let (dx, dy) = (x as f32 + 0.5 - center[0], y as f32 + 0.5 - center[1]);
+                let cov = coverage((dx * dx + dy * dy).sqrt(), radius, hardness);
+                if cov <= 0.0 {
+                    continue;
+                }
+                let cur = mask.get(x, y);
+                let nv = if erase {
+                    (cur as f32 * (1.0 - cov)) as u8
+                } else {
+                    cur.max((cov * 255.0) as u8)
+                };
+                mask.set(x, y, nv);
+            }
+        }
+    }
+}
+
 fn stamp(tiles: &mut TileMap, center: [f32; 2], p: &BrushParams, clip: Option<BrushClip<'_>>) {
     let r = p.radius;
     let x0 = (center[0] - r).floor() as i32;

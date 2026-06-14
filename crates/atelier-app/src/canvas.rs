@@ -3,7 +3,7 @@
 //! revision changes (spec 0004).
 
 use crate::{ActiveTool, EditorState, SelectDrag, StrokeState};
-use atelier_core::command::{PaintTiles, SetOffset, SetSelection, SetVectorShapes};
+use atelier_core::command::{PaintTiles, SetLayerMask, SetOffset, SetSelection, SetVectorShapes};
 use atelier_core::{CombineOp, NodeId, NodeKind};
 use atelier_gpu::{CheckerParams, CheckerboardRenderer, Viewport};
 use atelier_raster::{selection, BrushParams};
@@ -101,6 +101,75 @@ fn editable_raster(state: &EditorState) -> Option<NodeId> {
     editable.then_some(id)
 }
 
+/// Selected editable raster layer that has a mask (mask-edit target, spec 0050).
+fn mask_layer(state: &EditorState) -> Option<NodeId> {
+    let id = editable_raster(state)?;
+    match &state.editor.doc.node(id)?.kind {
+        NodeKind::Raster(c) if c.mask.is_some() => Some(id),
+        _ => None,
+    }
+}
+
+fn mask_mut(state: &mut EditorState, id: NodeId) -> Option<&mut atelier_core::Mask> {
+    match &mut state.editor.doc.node_mut(id)?.kind {
+        NodeKind::Raster(c) => c.mask.as_mut(),
+        _ => None,
+    }
+}
+
+fn mask_clone(state: &EditorState, id: NodeId) -> Option<atelier_core::Mask> {
+    match &state.editor.doc.node(id)?.kind {
+        NodeKind::Raster(c) => c.mask.clone(),
+        _ => None,
+    }
+}
+
+/// Brush/eraser painting into the active layer mask (doc space). Commits one
+/// undoable `SetLayerMask` on release (spec 0050).
+fn handle_mask_paint(
+    state: &mut EditorState,
+    response: &egui::Response,
+    pointer_doc: impl Fn(egui::Pos2) -> [f32; 2],
+    erase: bool,
+) {
+    let (r, hard) = (state.brush.radius, state.brush.hardness);
+    if response.drag_started_by(egui::PointerButton::Primary) {
+        let Some(id) = mask_layer(state) else { return };
+        let Some(pos) = response.interact_pointer_pos() else { return };
+        let before = mask_clone(state, id).expect("mask present");
+        let p = pointer_doc(pos);
+        if let Some(m) = mask_mut(state, id) {
+            atelier_raster::stamp_mask_segment(m, p, p, r, hard, erase);
+        }
+        state.mask_stroke = Some((id, before, p));
+        state.editor.history.touch();
+    } else if response.dragged_by(egui::PointerButton::Primary) {
+        if let Some((id, from)) = state.mask_stroke.as_ref().map(|(i, _, l)| (*i, *l)) {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let p = pointer_doc(pos);
+                if let Some(m) = mask_mut(state, id) {
+                    atelier_raster::stamp_mask_segment(m, from, p, r, hard, erase);
+                }
+                if let Some(s) = &mut state.mask_stroke {
+                    s.2 = p;
+                }
+                state.editor.history.touch();
+            }
+        }
+    }
+    if response.drag_stopped_by(egui::PointerButton::Primary) {
+        if let Some((id, before, _)) = state.mask_stroke.take() {
+            let new = mask_clone(state, id);
+            // Restore the pre-stroke mask, then apply as an undoable command.
+            if let Some(NodeKind::Raster(c)) = state.editor.doc.node_mut(id).map(|n| &mut n.kind) {
+                c.mask = Some(before);
+            }
+            let cmd = SetLayerMask::new(&state.editor.doc, id, new);
+            state.editor.apply(Box::new(cmd));
+        }
+    }
+}
+
 fn raster_offset(state: &EditorState, id: NodeId) -> [i32; 2] {
     match &state.editor.doc.node(id).expect("checked").kind {
         NodeKind::Raster(c) => c.offset,
@@ -145,6 +214,13 @@ fn handle_tools(
         }
         ActiveTool::Brush | ActiveTool::Eraser => {
             let erase = state.tool == ActiveTool::Eraser;
+
+            // Mask-edit mode: brush/eraser paint into the selected layer's mask.
+            if state.mask_edit && mask_layer(state).is_some() {
+                handle_mask_paint(state, response, pointer_doc, erase);
+                return;
+            }
+
             let params = BrushParams {
                 radius: state.brush.radius,
                 hardness: state.brush.hardness,

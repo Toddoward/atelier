@@ -146,6 +146,10 @@ pub struct EditorState {
     pub selected_extra: Vec<NodeId>,
     /// Defined fill pattern (Edit → Define Pattern), tiled by Fill with Pattern.
     pub pattern: Option<atelier_io::DecodedImage>,
+    /// When true, brush/eraser paint into the selected layer's mask (spec 0050).
+    pub mask_edit: bool,
+    /// Live mask stroke: (layer, pre-stroke mask snapshot, last doc point).
+    pub mask_stroke: Option<(NodeId, atelier_core::Mask, [f32; 2])>,
     /// Copy/paste source node (same document). Paste deep-clones it fresh each
     /// time (spec 0030).
     pub clipboard: Option<NodeId>,
@@ -304,6 +308,8 @@ impl AtelierApp {
                     pending_shape: None,
                     selected_extra: Vec::new(),
                     pattern: None,
+                    mask_edit: false,
+                    mask_stroke: None,
                     clipboard: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
@@ -1638,6 +1644,8 @@ impl AtelierApp {
                     pending_shape: None,
                     selected_extra: Vec::new(),
                     pattern: None,
+                    mask_edit: false,
+                    mask_stroke: None,
                     clipboard: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
@@ -3019,6 +3027,44 @@ mod ui_tests {
             NodeKind::Raster(c) => assert!(c.mask.is_some(), "undo restored the mask"),
             _ => panic!(),
         }
+    }
+
+    /// Spec 0050: painting in mask-edit mode modifies the layer mask, undoable.
+    #[test]
+    fn paint_on_mask_edits_mask_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(0, 0, 64, 64, [255, 0, 0, 255]);
+                c.tiles = t;
+                c.mask = Some(atelier_core::Mask::new()); // empty mask
+            }
+            st.tool = ActiveTool::Brush;
+            st.mask_edit = true;
+            st.brush.radius = 12.0;
+            st.brush.hardness = 1.0;
+        }
+        let any_mask = |h: &Harness<'static, AtelierApp>| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Raster(c) => {
+                    let m = c.mask.as_ref().unwrap();
+                    (0..48).flat_map(|x| (0..48).map(move |y| (x, y))).any(|(x, y)| m.get(x, y) > 0)
+                }
+                _ => panic!(),
+            }
+        };
+        pointer_drag(&mut h, egui::pos2(230.0, 70.0), egui::pos2(236.0, 74.0));
+        h.run();
+        assert!(any_mask(&h), "mask gained coverage where painted");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(!any_mask(&h), "undo restored the empty mask");
     }
 
     /// Spec 0047: layer mask from selection hides the unmasked area; undo restores.

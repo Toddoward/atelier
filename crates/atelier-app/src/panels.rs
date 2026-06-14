@@ -67,6 +67,13 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         }
     }
     if matches!(state.tool, ActiveTool::Brush | ActiveTool::Eraser) {
+        // Mask-edit toggle (only meaningful when the selected layer has a mask).
+        let has_mask = state.editor.selection.and_then(|id| state.editor.doc.node(id)).is_some_and(
+            |n| matches!(&n.kind, NodeKind::Raster(c) if c.mask.is_some()),
+        );
+        if has_mask {
+            ui.checkbox(&mut state.mask_edit, "Edit mask");
+        }
         ui.separator();
         ui.label("Size");
         ui.add(egui::Slider::new(&mut state.brush.radius, 1.0..=256.0).logarithmic(true));

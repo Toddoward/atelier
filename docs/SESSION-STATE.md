@@ -3,7 +3,27 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-aq (spec 0049 — mask invert & apply DONE)
+## Last session: 2026-06-13-ar (spec 0050 — paint on mask DONE; **layer masks complete**)
+
+### Done
+- **Spec 0050 ☑** — paint-on-mask: `brush::stamp_mask_segment` + `mask_edit` toggle; canvas
+  brush/eraser route to `handle_mask_paint` (live preview, one `SetLayerMask` per stroke).
+  Tools-panel "Edit mask" checkbox. app 51 tests green, clippy clean, smoke clean.
+- **Layer masks now complete** across specs 0047 (create) / 0048 (persist v2) / 0049
+  (invert+apply) / 0050 (paint).
+
+### Next
+1. **Smart objects** (DOC-5 — embedded Box<Document> + recursive compositor + .atl parts;
+   sizable, closes last R-14 item).
+2. **z-interleaved raster+vector compositing** (Phase 5); **INT-4 cross-paste**.
+3. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; verify
+   cross-platform — big gated item).
+
+### Watch out (additions)
+- Mask painting mutates live for preview then commits one SetLayerMask (snapshot before→after)
+  on release — mirror of the pixel brush's capture/commit but for masks.
+
+## Previous session: 2026-06-13-aq (spec 0049 — mask invert & apply DONE)
 
 ### Done
 - **Spec 0049 ☑** — `ApplyLayerMask` command (bake mask into pixel alpha + clear, undoable)

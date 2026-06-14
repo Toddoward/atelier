@@ -15,7 +15,9 @@ pub mod selection;
 
 pub use adjust::{apply_tile, target_tiles, Adjustment};
 pub use blend::{blend_rgb, dissolve_keeps};
-pub use brush::{segment_tiles, stamp_segment, stamp_segment_clipped, BrushParams};
+pub use brush::{
+    segment_tiles, stamp_mask_segment, stamp_segment, stamp_segment_clipped, BrushParams,
+};
 pub use compositor::composite_rgba8;
 pub use fill::{fill_pattern, fill_region, gradient_region, gradient_region_radial};
 pub use raster_vector::rasterize_vector;
