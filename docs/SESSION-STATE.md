@@ -3,7 +3,26 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ab (spec 0034 — TIFF/WebP/GIF/BMP DONE)
+## Last session: 2026-06-13-ac (spec 0035 — eyedropper DONE)
+
+### Done
+- **Spec 0035 ☑** — Eyedropper tool (key `I`): `canvas::sample_composite` reads the
+  composited pixel under the cursor into brush.color + vector_fill. app 38 tests green
+  (green/transparent/out-of-bounds sampling), clippy clean, smoke clean.
+
+### Next
+1. **INT-4 cross-paste**, **smart objects** (DOC-5), **z-interleaved compositing** —
+   the remaining Phase-5 interop items.
+2. **Phase 6 color management** (lcms2) — system lib. CI: add `liblcms2-dev` to the ubuntu
+   apt step (or vendor) and verify cross-platform before committing. This is the big gated
+   item; eyedropper/picker readouts (Lab/CMYK) come with it.
+3. Brush dynamics (flow/spacing/pressure), gradients/fill bucket (RAS-9), merge-down.
+
+### Watch out (additions)
+- Eyedropper samples the composite (all layers), not the active layer. Tool key `I` is plain;
+  `Ctrl+I` remains Invert (guarded by modifier check).
+
+## Previous session: 2026-06-13-ab (spec 0034 — TIFF/WebP/GIF/BMP DONE)
 
 ### Done
 - **Spec 0034 ☑** — added `image` features tiff/webp/gif/bmp; `IMPORT_EXTENSIONS`/

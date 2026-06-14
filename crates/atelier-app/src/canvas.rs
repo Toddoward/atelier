@@ -392,7 +392,36 @@ fn handle_tools(
                 state.pen_points.clear();
             }
         }
+        ActiveTool::Eyedropper => {
+            // Sample the composited document color into the brush + vector fill.
+            if response.clicked() || response.dragged_by(egui::PointerButton::Primary) {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let d = pointer_doc(pos);
+                    if let Some(c) = sample_composite(state, d) {
+                        state.brush.color = c;
+                        state.brush.vector_fill = c;
+                    }
+                }
+            }
+        }
     }
+}
+
+/// Composited straight-alpha color at doc pixel `d`, None if out of bounds.
+pub(crate) fn sample_composite(state: &EditorState, d: [f32; 2]) -> Option<[f32; 4]> {
+    let [w, h] = state.editor.doc.size;
+    let (x, y) = (d[0].floor() as i32, d[1].floor() as i32);
+    if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+        return None;
+    }
+    let rgba = atelier_raster::composite_rgba8(&state.editor.doc, w, h);
+    let i = ((y as usize * w as usize) + x as usize) * 4;
+    Some([
+        rgba[i] as f32 / 255.0,
+        rgba[i + 1] as f32 / 255.0,
+        rgba[i + 2] as f32 / 255.0,
+        rgba[i + 3] as f32 / 255.0,
+    ])
 }
 
 /// Nearest on-path anchor (shape idx, anchor idx) within ~10 screen px of

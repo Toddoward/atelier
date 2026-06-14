@@ -51,6 +51,7 @@ pub enum ActiveTool {
     ShapeStar,
     Pen,
     DirectSelect,
+    Eyedropper,
 }
 
 /// Which primitive a shape-tool drag produces (spec 0014/0015).
@@ -867,6 +868,10 @@ impl AtelierApp {
                     }
                     if i.key_pressed(Key::U) {
                         st.tool = ActiveTool::ShapeRect;
+                    }
+                    // Plain I = eyedropper; Ctrl+I (invert) is handled above.
+                    if i.key_pressed(Key::I) && i.modifiers.is_none() {
+                        st.tool = ActiveTool::Eyedropper;
                     }
                     if i.key_pressed(Key::P) {
                         st.tool = ActiveTool::Pen;
@@ -2240,6 +2245,28 @@ mod ui_tests {
             n0,
             "undo removed the duplicate"
         );
+    }
+
+    /// Spec 0035: eyedropper samples the composited color at a doc pixel.
+    #[test]
+    fn eyedropper_samples_composite_color() {
+        let mut h = harness();
+        create_doc(&mut h);
+        h.state_mut().place_image(atelier_io::DecodedImage {
+            width: 8,
+            height: 8,
+            rgba: [0, 200, 0, 255].repeat(64),
+        });
+        h.run();
+        let st = h.state().state.as_ref().unwrap();
+        // Inside the green square.
+        let c = canvas::sample_composite(st, [4.0, 4.0]).expect("in bounds");
+        assert!(c[1] > 0.7 && c[0] < 0.1, "sampled green: {c:?}");
+        // Outside the placed image (still in-doc) → transparent.
+        let t = canvas::sample_composite(st, [40.0, 40.0]).expect("in bounds");
+        assert_eq!(t[3], 0.0, "transparent where nothing painted");
+        // Out of document bounds → None.
+        assert!(canvas::sample_composite(st, [-1.0, 0.0]).is_none());
     }
 
     /// Spec 0031: boolean Pathfinder union of two overlapping shapes; undoable.
