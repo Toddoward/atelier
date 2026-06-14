@@ -228,10 +228,85 @@ pub fn boundary_segments(mask: &Mask) -> Vec<([f32; 2], [f32; 2])> {
     out
 }
 
+/// Trace the selection boundary into closed loops of points (doc space),
+/// collinear runs simplified to corners (INT-5, spec 0045). Rectilinear loops
+/// from the marching-squares unit segments.
+pub fn boundary_paths(mask: &Mask) -> Vec<Vec<[f32; 2]>> {
+    use std::collections::HashMap;
+    let segs = boundary_segments(mask);
+    let key = |p: [f32; 2]| (p[0] as i32, p[1] as i32);
+    let mut adj: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (i, (a, b)) in segs.iter().enumerate() {
+        adj.entry(key(*a)).or_default().push(i);
+        adj.entry(key(*b)).or_default().push(i);
+    }
+    let mut used = vec![false; segs.len()];
+    let mut loops = Vec::new();
+    for start in 0..segs.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let (a0, b0) = segs[start];
+        let mut pts = vec![a0, b0];
+        let mut cur = b0;
+        loop {
+            let k = key(cur);
+            let Some(&j) = adj[&k].iter().find(|&&j| !used[j]) else { break };
+            used[j] = true;
+            let (a, b) = segs[j];
+            let nxt = if key(a) == k { b } else { a };
+            if key(nxt) == key(a0) {
+                break; // closed
+            }
+            pts.push(nxt);
+            cur = nxt;
+        }
+        let simp = simplify_collinear(&pts);
+        if simp.len() >= 3 {
+            loops.push(simp);
+        }
+    }
+    loops
+}
+
+/// Drop points whose neighbors are collinear (cyclic).
+fn simplify_collinear(pts: &[[f32; 2]]) -> Vec<[f32; 2]> {
+    let n = pts.len();
+    if n < 3 {
+        return pts.to_vec();
+    }
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let p = pts[(i + n - 1) % n];
+        let c = pts[i];
+        let q = pts[(i + 1) % n];
+        let cross = (c[0] - p[0]) * (q[1] - p[1]) - (c[1] - p[1]) * (q[0] - p[0]);
+        if cross.abs() > 1e-3 {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use atelier_core::CombineOp;
+
+    #[test]
+    fn boundary_paths_of_rect_is_one_quad() {
+        let m = rect_mask(1.0, 2.0, 6.0, 5.0);
+        let loops = boundary_paths(&m);
+        assert_eq!(loops.len(), 1, "single closed loop");
+        assert_eq!(loops[0].len(), 4, "rectangle simplifies to 4 corners");
+        // Bounds of the loop match the rect.
+        let xs: Vec<f32> = loops[0].iter().map(|p| p[0]).collect();
+        let ys: Vec<f32> = loops[0].iter().map(|p| p[1]).collect();
+        let (x0, x1) = (xs.iter().cloned().fold(f32::MAX, f32::min), xs.iter().cloned().fold(f32::MIN, f32::max));
+        let (y0, y1) = (ys.iter().cloned().fold(f32::MAX, f32::min), ys.iter().cloned().fold(f32::MIN, f32::max));
+        assert_eq!((x0, y0, x1, y1), (1.0, 2.0, 6.0, 5.0));
+    }
 
     #[test]
     fn rect_mask_full_interior_and_aa_edges() {

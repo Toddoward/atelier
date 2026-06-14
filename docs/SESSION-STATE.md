@@ -3,7 +3,26 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-al (spec 0044 — selection from layer DONE)
+## Last session: 2026-06-13-am (spec 0045 — selection to vector DONE)
+
+### Done
+- **Spec 0045 ☑** — Select → To Vector Path (INT-5 reverse): `selection::boundary_paths`
+  chains marching-squares segments into simplified closed loops; app `selection_to_vector`
+  builds an even-odd Path → Vector layer, undoable. Both INT-5 directions now covered.
+  raster +1 / app 48 tests green, clippy clean, smoke clean.
+
+### Next
+1. **INT-4 cross-paste** (needs a layer clipboard across docs — currently single-doc;
+   in-doc copy/paste exists via spec 0030).
+2. **Smart objects** (DOC-5 — embedded Box<Document>, recursive compositor + .atl handling).
+3. **z-interleaved raster+vector compositing** (Phase 5); **Phase 6 color management** (lcms2 —
+   liblcms2-dev on ubuntu CI or vendor; verify cross-platform — big gated item).
+
+### Watch out (additions)
+- `boundary_paths` output is rectilinear (pixel-accurate), not curve-fitted. Selection holes
+  become inner loops resolved by even-odd fill.
+
+## Previous session: 2026-06-13-al (spec 0044 — selection from layer DONE)
 
 ### Done
 - **Spec 0044 ☑** — Select → From Layer (INT-5): `selection_from_layer` builds a doc selection

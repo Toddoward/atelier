@@ -539,6 +539,40 @@ impl AtelierApp {
         st.editor.selection = Some(id);
     }
 
+    /// Trace the current selection boundary into a new vector layer (INT-5
+    /// reverse, spec 0045). Undoable; no-op without a selection.
+    fn selection_to_vector(&mut self) {
+        use atelier_core::atelier_vector::{FillRule, Path, PathBuilder, Shape, VectorContent};
+        use atelier_core::{LayerProps, Node, NodeKind};
+        let Some(st) = &mut self.state else { return };
+        let Some(mask) = st.editor.doc.selection.clone() else { return };
+        let loops = atelier_raster::selection::boundary_paths(&mask);
+        if loops.is_empty() {
+            return;
+        }
+        let mut b = PathBuilder::new();
+        for lp in &loops {
+            b.move_to(lp[0]);
+            for p in &lp[1..] {
+                b.line_to(*p);
+            }
+            b.close();
+        }
+        let mut path: Path = b.build();
+        path.fill_rule = FillRule::EvenOdd;
+        let content = VectorContent { shapes: vec![Shape::filled(path, st.brush.vector_fill)] };
+        let root = st.editor.doc.root();
+        let cmd = atelier_core::command::AddNode::new(
+            &mut st.editor.doc,
+            Node::new(LayerProps::named("Traced"), NodeKind::Vector(content)),
+            root,
+            0,
+        );
+        let id = cmd.id;
+        st.editor.apply(Box::new(cmd));
+        st.editor.selection = Some(id);
+    }
+
     /// Build a document selection from the selected layer's alpha (INT-5,
     /// spec 0044): raster uses its tiles' alpha, vector is rasterized. Undoable.
     fn selection_from_layer(&mut self) {
@@ -1361,6 +1395,13 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.selection_from_layer();
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new("To Vector Path"))
+                        .clicked()
+                    {
+                        self.selection_to_vector();
                         ui.close_menu();
                     }
                     ui.separator();
@@ -2797,6 +2838,50 @@ mod ui_tests {
 
         send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
         assert_eq!(alpha(&h, 1, 30), 0, "undo cleared the gradient");
+    }
+
+    /// Spec 0045: trace a selection into a vector layer; undo removes it.
+    #[test]
+    fn selection_to_vector_traces_rect() {
+        let mut h = harness();
+        create_doc(&mut h);
+        // Rectangular selection [4,4,20,16].
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let mut m = atelier_core::Mask::new();
+            for y in 4..16 {
+                for x in 4..20 {
+                    m.set(x, y, 255);
+                }
+            }
+            let cmd = atelier_core::command::SetSelection::new(
+                &st.editor.doc,
+                Some(std::sync::Arc::new(m)),
+                "sel",
+            );
+            st.editor.apply(Box::new(cmd));
+        }
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+        h.state_mut().selection_to_vector();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            assert_eq!(st.editor.doc.node_count(), n0 + 1, "vector layer added");
+            let id = st.editor.selection.unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Vector(c) => {
+                    let b = c.shapes[0].path.bounds().unwrap();
+                    assert_eq!((b[0], b[1], b[2], b[3]), (4.0, 4.0, 20.0, 16.0), "traced rect");
+                }
+                _ => panic!("vector expected"),
+            }
+        }
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0,
+            "undo removed traced layer"
+        );
     }
 
     /// Spec 0044: build a selection from a layer's alpha (raster and vector).
