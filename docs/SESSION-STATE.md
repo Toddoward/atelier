@@ -3,7 +3,32 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-14-at (spec 0052 — smart objects embed & composite DONE)
+## Last session: 2026-06-14-au (spec 0053 — persist embedded smart objects DONE)
+
+### Done
+- **Spec 0053 ☑** — `.atl` schema **v3**: smart-object embedded pixels + embedded layer masks
+  now persist. Tile/mask part keys are a dotted node-id chain (`tiles/<a>.<b>/…`,
+  `masks/<a>.<b>.bin`) addressing nodes through nested embedded docs; `save_atl` recurses,
+  `load_atl` resolves the chain by descending `Smart(content).doc`. Top-level single-id keys
+  are a one-element chain ⇒ v0/v1/v2 files load unchanged (no migration). **Closes the last
+  R-14 item** (session-only data). io 17 tests green (`round_trips_embedded_smart_object`,
+  `round_trips_nested_smart_object`), back-compat tests green, clippy clean. FORMAT-ATL.md → v3.
+
+### Next
+1. **Edit smart-object contents** ("Edit Contents" → open/return from embedded doc); smart
+   object non-destructive transform beyond integer offset (scale/rotate).
+2. **Crisp-at-zoom vector re-rasterization** (spec 0051 follow-up — vectors render at doc
+   resolution in the composite today).
+3. **INT-4 cross-paste** (needs multi-document support — app is single-doc today).
+4. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; big gated item).
+
+### Watch out (additions)
+- `.atl` is schema v3. New skipped payloads inside embedded docs should follow the same
+  dotted-chain part pattern (`resolve_raster_mut` / `write_parts` recursion) and bump the
+  version. The embedded doc tree still serializes inline in the manifest; only pixel/mask
+  bytes ride in parts.
+
+## Previous session: 2026-06-14-at (spec 0052 — smart objects embed & composite DONE)
 
 ### Done
 - **Spec 0052 ☑** — smart objects (DOC-5, first slice): `NodeKind::Smart(SmartContent { doc:

@@ -82,13 +82,13 @@ uses it — so users see correct output. When the GPU compositor is wired to the
 slice), adjustment math must be ported to WGSL and golden fixtures extended to cover
 adjustment layers before that switch flips. Tracked; do not wire GPU→canvas until closed.
 
-## R-14 · Session-only data not yet persisted in `.atl`
-Several non-JSON payloads are `#[serde(skip)]` and not yet written to the `.atl` container:
-(future) smart-object embedded sub-documents. **Update (spec 0048):** layer masks are now
-persisted as `.atl` v2 binary parts — closed. Remaining: embedded smart-object docs (when
-smart objects land). **Mitigation:** before any format freeze (Phase 7) the `.atl`
-writer/reader must add parts for embedded smart-object docs (schema bump), or the save path
-must report them in the degradation report. Tracked; do not freeze `.atl` until closed.
+## R-14 · Session-only data not yet persisted in `.atl` — CLOSED (spec 0053)
+Several non-JSON payloads were `#[serde(skip)]` and not written to the `.atl` container.
+**Update (spec 0048):** layer masks persisted as `.atl` v2 binary parts. **Update (spec
+0053):** smart-object embedded sub-document pixels + embedded masks now persist as v3
+dotted-chain parts (`tiles/<a>.<b>/…`). All known session-only payloads are now persisted —
+**risk closed.** Residual note: any *new* `#[serde(skip)]` payload must follow the same
+binary-part pattern (and bump the schema) before the Phase-7 format freeze.
 
 ## Plan-review verdict
 Goal is sound and achievable **as tiered**: the original prompt's flexibility clauses

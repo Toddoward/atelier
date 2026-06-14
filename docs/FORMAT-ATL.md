@@ -3,7 +3,24 @@
 Open, versioned container. Spec evolves per phase; loaders must reject
 `schema_version` greater than they understand (tested) and migrate older ones.
 
-## Schema v2 (current)
+## Schema v3 (current)
+
+Adds, on top of v2: persistence of pixels/masks that live **inside embedded smart-object
+documents** (spec 0053). Part keys become a **dotted node-id chain** addressing a node through
+nested embedded documents:
+
+| Part | Content |
+|------|---------|
+| `tiles/<a>.<b>.<c>/<tx>_<ty>.bin` | a tile of the raster node reached by descending smart-object nodes `a`, `b` and selecting raster node `c` in the deepest embedded doc |
+| `masks/<a>.<b>.bin` | the layer mask of that nested raster node (same header+coverage layout as v2) |
+
+Top-level nodes keep the single-id key (`tiles/<id>/…`, `masks/<id>.bin`) — i.e. a one-element
+chain — so v1/v2 files load unchanged (no migration needed). The embedded document *structure*
+serializes inline in the manifest (`Smart(SmartContent{ doc, offset })`); only its pixel/mask
+bytes ride in these parts. An unresolvable chain (or non-numeric segment) is a hard
+`BadTilePart` load error, never a panic.
+
+## Schema v2 (superseded)
 
 Adds, on top of v1:
 
@@ -51,7 +68,6 @@ ZIP archive containing exactly:
 
 ## Planned (bump `schema_version` and add a migration each time)
 
-- v2 (Phase 4): `paths/<layer-id>.json` — vector shape lists
-- v2 (Phase 6): embedded ICC profile part; real `color_mode`
-- v2 (Phase 10): embedded smart-object sub-documents as nested `.atl` parts
+- (Phase 6): embedded ICC profile part; real `color_mode`
+- (Phase 10): linked (external-file) smart objects; embedded-doc de-duplication
 - Freeze + publish at Phase 7 (ROADMAP); changes after freeze require migrations + tests

@@ -12,7 +12,7 @@ use std::path::Path;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 const MANIFEST: &str = "manifest.json";
 
 #[derive(Debug, thiserror::Error)]
@@ -46,29 +46,82 @@ pub fn save_atl(doc: &Document, path: &Path) -> Result<(), AtlError> {
     zip.start_file(MANIFEST, SimpleFileOptions::default())?;
     zip.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
 
-    for (id, _) in doc.iter_tree() {
-        let Some(node) = doc.node(id) else { continue };
-        if let NodeKind::Raster(content) = &node.kind {
-            for (&(tx, ty), tile) in content.tiles.tiles() {
-                zip.start_file(format!("tiles/{}/{}_{}.bin", id.0, tx, ty), stored)?;
-                zip.write_all(&lz4_flex::compress_prepend_size(tile.bytes()))?;
-            }
-            // Layer mask (schema v2): header (x0,y0,w,h i32 LE) + coverage bytes.
-            if let Some((x0, y0, w, h, cov)) = content.mask.as_ref().and_then(|m| m.to_region_bytes())
-            {
-                let mut buf = Vec::with_capacity(16 + cov.len());
-                buf.extend_from_slice(&x0.to_le_bytes());
-                buf.extend_from_slice(&y0.to_le_bytes());
-                buf.extend_from_slice(&w.to_le_bytes());
-                buf.extend_from_slice(&h.to_le_bytes());
-                buf.extend_from_slice(&cov);
-                zip.start_file(format!("masks/{}.bin", id.0), stored)?;
-                zip.write_all(&lz4_flex::compress_prepend_size(&buf))?;
-            }
-        }
-    }
+    write_parts(&mut zip, doc, "", stored)?;
     zip.finish()?;
     Ok(())
+}
+
+/// Recursively write tile/mask parts. `prefix` is the dotted node-id chain of
+/// the smart-object ancestors (empty at the top level). Raster nodes write their
+/// pixels/mask under `<prefix>.<id>` (just `<id>` at the top); Smart nodes recurse
+/// into their embedded document (schema v3, spec 0053).
+fn write_parts(
+    zip: &mut ZipWriter<File>,
+    doc: &Document,
+    prefix: &str,
+    stored: SimpleFileOptions,
+) -> Result<(), AtlError> {
+    for (id, _) in doc.iter_tree() {
+        let Some(node) = doc.node(id) else { continue };
+        let key = if prefix.is_empty() {
+            id.0.to_string()
+        } else {
+            format!("{prefix}.{}", id.0)
+        };
+        match &node.kind {
+            NodeKind::Raster(content) => {
+                for (&(tx, ty), tile) in content.tiles.tiles() {
+                    zip.start_file(format!("tiles/{key}/{tx}_{ty}.bin"), stored)?;
+                    zip.write_all(&lz4_flex::compress_prepend_size(tile.bytes()))?;
+                }
+                // Layer mask (schema v2): header (x0,y0,w,h i32 LE) + coverage bytes.
+                if let Some((x0, y0, w, h, cov)) =
+                    content.mask.as_ref().and_then(|m| m.to_region_bytes())
+                {
+                    let mut buf = Vec::with_capacity(16 + cov.len());
+                    buf.extend_from_slice(&x0.to_le_bytes());
+                    buf.extend_from_slice(&y0.to_le_bytes());
+                    buf.extend_from_slice(&w.to_le_bytes());
+                    buf.extend_from_slice(&h.to_le_bytes());
+                    buf.extend_from_slice(&cov);
+                    zip.start_file(format!("masks/{key}.bin"), stored)?;
+                    zip.write_all(&lz4_flex::compress_prepend_size(&buf))?;
+                }
+            }
+            NodeKind::Smart(content) => {
+                write_parts(zip, &content.doc, &key, stored)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Parse a dotted node-id chain (e.g. `"3.1"`) into ids. Returns `None` on any
+/// non-numeric or empty segment.
+fn parse_chain(s: &str) -> Option<Vec<u64>> {
+    let chain: Option<Vec<u64>> = s.split('.').map(|seg| seg.parse::<u64>().ok()).collect();
+    chain.filter(|c| !c.is_empty())
+}
+
+/// Resolve a node-id chain to the target raster content, descending through
+/// nested smart-object documents for each non-final id (spec 0053).
+fn resolve_raster_mut<'a>(
+    doc: &'a mut Document,
+    chain: &[u64],
+) -> Option<&'a mut atelier_core::RasterContent> {
+    let (&leaf, ancestors) = chain.split_last()?;
+    let mut cur = doc;
+    for &nid in ancestors {
+        let NodeKind::Smart(content) = &mut cur.node_mut(NodeId(nid))?.kind else {
+            return None;
+        };
+        cur = content.doc.as_mut();
+    }
+    match &mut cur.node_mut(NodeId(leaf))?.kind {
+        NodeKind::Raster(content) => Some(content),
+        _ => None,
+    }
 }
 
 pub fn load_atl(path: &Path) -> Result<Document, AtlError> {
@@ -87,15 +140,17 @@ pub fn load_atl(path: &Path) -> Result<Document, AtlError> {
     let mut doc: Document = serde_json::from_value(doc_json)?;
 
     // Reattach tile parts (absent in v0 files — manifest alone is a valid doc).
+    // Keys are a dotted node-id chain through nested smart objects (schema v3);
+    // v1/v2 single-id keys resolve as a one-element chain.
     let names: Vec<String> = zip.file_names().map(String::from).collect();
     for name in names {
         let Some(rest) = name.strip_prefix("tiles/") else { continue };
-        let parse = || -> Option<(NodeId, i32, i32)> {
-            let (id, coords) = rest.split_once('/')?;
+        let parse = || -> Option<(Vec<u64>, i32, i32)> {
+            let (key, coords) = rest.split_once('/')?;
             let (tx, ty) = coords.strip_suffix(".bin")?.split_once('_')?;
-            Some((NodeId(id.parse().ok()?), tx.parse().ok()?, ty.parse().ok()?))
+            Some((parse_chain(key)?, tx.parse().ok()?, ty.parse().ok()?))
         };
-        let (id, tx, ty) = parse().ok_or_else(|| AtlError::BadTilePart(name.clone()))?;
+        let (chain, tx, ty) = parse().ok_or_else(|| AtlError::BadTilePart(name.clone()))?;
 
         let mut compressed = Vec::new();
         zip.by_name(&name)?.read_to_end(&mut compressed)?;
@@ -103,21 +158,20 @@ pub fn load_atl(path: &Path) -> Result<Document, AtlError> {
             .map_err(|_| AtlError::BadTilePart(name.clone()))?;
         let tile = Tile::from_bytes(bytes).map_err(|_| AtlError::BadTilePart(name.clone()))?;
 
-        match doc.node_mut(id).map(|n| &mut n.kind) {
-            Some(NodeKind::Raster(content)) => content.tiles.insert_tile((tx, ty), tile),
-            _ => return Err(AtlError::BadTilePart(name)),
+        match resolve_raster_mut(&mut doc, &chain) {
+            Some(content) => content.tiles.insert_tile((tx, ty), tile),
+            None => return Err(AtlError::BadTilePart(name)),
         }
     }
 
-    // Reattach layer mask parts (schema v2).
+    // Reattach layer mask parts (schema v2; v3 dotted chains for nested docs).
     let mask_names: Vec<String> =
         zip.file_names().filter(|n| n.starts_with("masks/")).map(String::from).collect();
     for name in mask_names {
-        let id = name
+        let chain = name
             .strip_prefix("masks/")
             .and_then(|r| r.strip_suffix(".bin"))
-            .and_then(|s| s.parse::<u64>().ok())
-            .map(NodeId)
+            .and_then(parse_chain)
             .ok_or_else(|| AtlError::BadTilePart(name.clone()))?;
         let mut compressed = Vec::new();
         zip.by_name(&name)?.read_to_end(&mut compressed)?;
@@ -133,7 +187,7 @@ pub fn load_atl(path: &Path) -> Result<Document, AtlError> {
             return Err(AtlError::BadTilePart(name));
         }
         let mask = atelier_core::Mask::from_region_bytes(x0, y0, w, h, cov);
-        if let Some(NodeKind::Raster(content)) = doc.node_mut(id).map(|n| &mut n.kind) {
+        if let Some(content) = resolve_raster_mut(&mut doc, &chain) {
             content.mask = Some(mask);
         }
     }
@@ -420,5 +474,109 @@ mod tests {
         let err = load_atl(&path).unwrap_err();
         std::fs::remove_file(&path).ok();
         assert!(matches!(err, AtlError::Container(_)));
+    }
+
+    /// Spec 0053: a smart object's embedded pixels AND embedded layer mask
+    /// survive save→load (schema v3).
+    #[test]
+    fn round_trips_embedded_smart_object() {
+        use atelier_core::{LayerProps, Mask, SmartContent};
+        let mut inner = Document::new([32, 32], ProjectFocus::Raster);
+        let iroot = inner.root();
+        let mut content = RasterContent::default();
+        content.tiles.fill_rect(0, 0, 20, 20, [11, 22, 33, 255]);
+        let mut m = Mask::new();
+        for y in 0..16 {
+            for x in 0..10 {
+                m.set(x, y, 180);
+            }
+        }
+        content.mask = Some(m);
+        let mut add_inner = AddNode::new(
+            &mut inner,
+            Node::new(LayerProps::named("inner-raster"), NodeKind::Raster(content)),
+            iroot,
+            0,
+        );
+        add_inner.apply(&mut inner);
+
+        let mut doc = Document::new([32, 32], ProjectFocus::Raster);
+        let root = doc.root();
+        let mut add_s = AddNode::new(
+            &mut doc,
+            Node::new(
+                LayerProps::named("smart"),
+                NodeKind::Smart(SmartContent { doc: Box::new(inner), offset: [4, 6] }),
+            ),
+            root,
+            0,
+        );
+        add_s.apply(&mut doc);
+
+        let path = temp("smart");
+        save_atl(&doc, &path).unwrap();
+        let loaded = load_atl(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(doc, loaded, "embedded pixels+mask round-trip deep-equal");
+
+        let NodeKind::Smart(sc) = &loaded.node(add_s.id).unwrap().kind else {
+            panic!("smart expected");
+        };
+        let (iid, _) = sc.doc.iter_tree().into_iter().next().expect("inner layer");
+        let NodeKind::Raster(c) = &sc.doc.node(iid).unwrap().kind else {
+            panic!("inner raster expected");
+        };
+        assert_eq!(c.tiles.pixel(5, 5), [11, 22, 33, 255], "embedded pixel survived");
+        assert_eq!(c.mask.as_ref().unwrap().get(3, 3), 180, "embedded mask survived");
+    }
+
+    /// Spec 0053: pixels nested two smart-objects deep survive (the dotted-chain
+    /// key disambiguates per-doc id spaces).
+    #[test]
+    fn round_trips_nested_smart_object() {
+        use atelier_core::{LayerProps, SmartContent};
+        let mut deep = Document::new([16, 16], ProjectFocus::Raster);
+        let droot = deep.root();
+        let mut content = RasterContent::default();
+        content.tiles.fill_rect(0, 0, 8, 8, [200, 100, 50, 255]);
+        let mut a = AddNode::new(
+            &mut deep,
+            Node::new(LayerProps::named("deep-raster"), NodeKind::Raster(content)),
+            droot,
+            0,
+        );
+        a.apply(&mut deep);
+
+        let mut mid = Document::new([16, 16], ProjectFocus::Raster);
+        let mroot = mid.root();
+        let mut b = AddNode::new(
+            &mut mid,
+            Node::new(
+                LayerProps::named("mid-smart"),
+                NodeKind::Smart(SmartContent { doc: Box::new(deep), offset: [1, 1] }),
+            ),
+            mroot,
+            0,
+        );
+        b.apply(&mut mid);
+
+        let mut doc = Document::new([16, 16], ProjectFocus::Raster);
+        let root = doc.root();
+        let mut c = AddNode::new(
+            &mut doc,
+            Node::new(
+                LayerProps::named("top-smart"),
+                NodeKind::Smart(SmartContent { doc: Box::new(mid), offset: [2, 2] }),
+            ),
+            root,
+            0,
+        );
+        c.apply(&mut doc);
+
+        let path = temp("nested");
+        save_atl(&doc, &path).unwrap();
+        let loaded = load_atl(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(doc, loaded, "nested smart-in-smart pixels round-trip deep-equal");
     }
 }
