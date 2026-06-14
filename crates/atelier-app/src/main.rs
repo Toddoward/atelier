@@ -593,6 +593,37 @@ impl AtelierApp {
         st.editor.apply(Box::new(cmd));
     }
 
+    /// Invert the selected raster layer's mask (spec 0049). Undoable.
+    fn invert_layer_mask(&mut self) {
+        use atelier_core::NodeKind;
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let size = st.editor.doc.size;
+        let new = match st.editor.doc.node(id).map(|n| &n.kind) {
+            Some(NodeKind::Raster(c)) => c.mask.as_ref().map(|m| m.inverted(size)),
+            _ => return,
+        };
+        let Some(new) = new else { return }; // no mask → nothing to invert
+        let cmd = atelier_core::command::SetLayerMask::new(&st.editor.doc, id, Some(new));
+        st.editor.apply(Box::new(cmd));
+    }
+
+    /// Bake the selected raster layer's mask into its pixels (spec 0049).
+    fn apply_layer_mask(&mut self) {
+        use atelier_core::NodeKind;
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let has_mask = matches!(
+            st.editor.doc.node(id).map(|n| &n.kind),
+            Some(NodeKind::Raster(c)) if c.mask.is_some()
+        );
+        if !has_mask {
+            return;
+        }
+        let cmd = atelier_core::command::ApplyLayerMask::new(&st.editor.doc, id);
+        st.editor.apply(Box::new(cmd));
+    }
+
     /// Build a document selection from the selected layer's alpha (INT-5,
     /// spec 0044): raster uses its tiles' alpha, vector is rasterized. Undoable.
     fn selection_from_layer(&mut self) {
@@ -1372,6 +1403,19 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.set_layer_mask(false);
+                        ui.close_menu();
+                    }
+                    let has_mask = self.state.as_ref().is_some_and(|s| {
+                        s.editor.selection.and_then(|id| s.editor.doc.node(id)).is_some_and(|n| {
+                            matches!(&n.kind, atelier_core::NodeKind::Raster(c) if c.mask.is_some())
+                        })
+                    });
+                    if ui.add_enabled(has_mask, egui::Button::new("Invert Layer Mask")).clicked() {
+                        self.invert_layer_mask();
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(has_mask, egui::Button::new("Apply Layer Mask")).clicked() {
+                        self.apply_layer_mask();
                         ui.close_menu();
                     }
                     if ui.add_enabled(has, egui::Button::new("Merge Visible")).clicked() {
@@ -2925,6 +2969,56 @@ mod ui_tests {
             n0,
             "undo removed traced layer"
         );
+    }
+
+    /// Spec 0049: apply (bake) a layer mask into pixels; undo restores both.
+    #[test]
+    fn apply_layer_mask_bakes_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(0, 0, 16, 16, [255, 0, 0, 255]);
+                c.tiles = t;
+                // Mask: left half opaque, right half absent (0).
+                let mut m = atelier_core::Mask::new();
+                for y in 0..16 {
+                    for x in 0..8 {
+                        m.set(x, y, 255);
+                    }
+                }
+                c.mask = Some(m);
+            }
+        }
+        let alpha = |h: &Harness<'static, AtelierApp>, x: i32, y: i32| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Raster(c) => c.tiles.pixel(x, y)[3],
+                _ => panic!(),
+            }
+        };
+        h.state_mut().apply_layer_mask();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Raster(c) => assert!(c.mask.is_none(), "mask cleared after apply"),
+                _ => panic!(),
+            }
+        }
+        assert_eq!(alpha(&h, 4, 4), 255, "masked-in pixel kept");
+        assert_eq!(alpha(&h, 12, 4), 0, "masked-out pixel baked to transparent");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(alpha(&h, 12, 4), 255, "undo restored original pixels");
+        match &h.state().state.as_ref().unwrap().editor.doc.node(id).unwrap().kind {
+            NodeKind::Raster(c) => assert!(c.mask.is_some(), "undo restored the mask"),
+            _ => panic!(),
+        }
     }
 
     /// Spec 0047: layer mask from selection hides the unmasked area; undo restores.

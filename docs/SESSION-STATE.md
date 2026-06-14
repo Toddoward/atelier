@@ -3,7 +3,23 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ap (spec 0048 — persist layer masks DONE)
+## Last session: 2026-06-13-aq (spec 0049 — mask invert & apply DONE)
+
+### Done
+- **Spec 0049 ☑** — `ApplyLayerMask` command (bake mask into pixel alpha + clear, undoable)
+  + `invert_layer_mask` (Mask::inverted); Layer menu Invert/Apply Layer Mask. app 50 tests
+  green, clippy clean, smoke clean.
+
+### Next
+1. **Paint-on-mask** edit mode (the remaining mask gap — brush targets the mask).
+2. **Smart objects** (DOC-5 — embedded doc + .atl parts); **z-interleaved compositing**.
+3. **INT-4 cross-paste**; **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or
+   vendor; verify cross-platform — big gated item).
+
+### Watch out (additions)
+- `ApplyLayerMask` snapshots the full tile map for undo (simple; could diff later).
+
+## Previous session: 2026-06-13-ap (spec 0048 — persist layer masks DONE)
 
 ### Done
 - **Spec 0048 ☑** — `.atl` schema **v2**: layer masks persisted as `masks/<id>.bin` parts

@@ -316,6 +316,64 @@ impl Command for SetSelection {
     }
 }
 
+/// Bake a raster layer's mask into its pixel alpha and clear the mask
+/// (spec 0049). Undoable: restores the pre-bake tiles and mask.
+#[derive(Debug)]
+pub struct ApplyLayerMask {
+    pub id: NodeId,
+    old_tiles: Option<crate::TileMap>,
+    old_mask: Option<crate::Mask>,
+}
+
+impl ApplyLayerMask {
+    pub fn new(_doc: &Document, id: NodeId) -> Self {
+        Self { id, old_tiles: None, old_mask: None }
+    }
+}
+
+impl Command for ApplyLayerMask {
+    fn label(&self) -> String {
+        "Apply Layer Mask".into()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        let Some(crate::NodeKind::Raster(c)) = doc.node_mut(self.id).map(|n| &mut n.kind) else {
+            return;
+        };
+        self.old_tiles = Some(c.tiles.clone());
+        self.old_mask = c.mask.clone();
+        let Some(mask) = c.mask.take() else { return };
+        let off = c.offset;
+        let t = crate::TILE_SIZE as i32;
+        let coords: Vec<crate::TileCoord> = c.tiles.tiles().map(|(k, _)| *k).collect();
+        for (tx, ty) in coords {
+            for iy in 0..t {
+                for ix in 0..t {
+                    let (lx, ly) = (tx * t + ix, ty * t + iy);
+                    let mut px = c.tiles.pixel(lx, ly);
+                    if px[3] == 0 {
+                        continue;
+                    }
+                    let cov = mask.get(lx + off[0], ly + off[1]) as u32;
+                    px[3] = (px[3] as u32 * cov / 255) as u8;
+                    c.tiles.set_pixel(lx, ly, px);
+                }
+            }
+        }
+        c.tiles.prune_blank();
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        if let Some(crate::NodeKind::Raster(c)) = doc.node_mut(self.id).map(|n| &mut n.kind) {
+            if let Some(t) = self.old_tiles.take() {
+                c.tiles = t;
+            }
+            c.mask = self.old_mask.take();
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Set or clear a raster layer's mask (spec 0047). Undoable.
 #[derive(Debug)]
 pub struct SetLayerMask {
