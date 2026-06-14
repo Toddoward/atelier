@@ -609,6 +609,56 @@ impl Command for Batch {
     }
 }
 
+/// Replace the whole layer tree with one pre-built raster layer (Flatten
+/// Image — spec 0040). The flattened pixels are composited by the app and
+/// passed in, keeping core free of the compositor.
+#[derive(Debug)]
+pub struct FlattenDocument {
+    raster_id: NodeId,
+    raster: Node,
+    /// Captured on apply (root children subtrees, in original order).
+    removed: Vec<ExtractedSubtree>,
+    label: String,
+}
+
+impl FlattenDocument {
+    pub fn new(doc: &mut Document, raster: Node) -> Self {
+        Self {
+            raster_id: doc.alloc_id(),
+            raster,
+            removed: Vec::new(),
+            label: "Flatten Image".into(),
+        }
+    }
+}
+
+impl Command for FlattenDocument {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        let root = doc.root();
+        let children = doc.children(root).to_vec();
+        self.removed.clear();
+        // Remove last-first so each removal's recorded index is the original one.
+        for id in children.iter().rev() {
+            self.removed.push(doc.remove_subtree(*id).expect("child present"));
+        }
+        doc.insert_node(self.raster_id, self.raster.clone(), root, 0)
+            .expect("root accepts raster");
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        doc.remove_subtree(self.raster_id).expect("flattened raster present");
+        // `removed` is last→first; restore first→last at original indices.
+        for (nodes, parent, index) in std::mem::take(&mut self.removed).into_iter().rev() {
+            doc.restore_subtree(nodes, parent, index).expect("restore child");
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Group sibling nodes under a new group (DOC-2, spec 0028). All `ids` must
 /// share a parent. The group takes the position of the topmost member; members
 /// keep their relative order inside it.
@@ -986,6 +1036,26 @@ mod tests {
         // Merge coalesces same-target edits (one undo per drag).
         let next = SetVectorShapes::new(&doc, id, edited);
         assert!(cmd.try_merge(next.as_any()));
+    }
+
+    #[test]
+    fn flatten_replaces_tree_and_reverts() {
+        let mut doc = Document::new([8, 8], ProjectFocus::Raster);
+        let root = doc.root();
+        for n in ["a", "b", "c"] {
+            let mut add = AddNode::new(&mut doc, leaf(n), root, usize::MAX);
+            add.apply(&mut doc);
+        }
+        let raster = leaf("Flattened");
+        let mut cmd = FlattenDocument::new(&mut doc, raster);
+        // Snapshot after new() — it allocs the raster id (ids never reused).
+        let baseline = doc.clone();
+        cmd.apply(&mut doc);
+        assert_eq!(doc.children(root).len(), 1, "tree replaced by one layer");
+        assert_eq!(doc.node(doc.children(root)[0]).unwrap().props.name, "Flattened");
+
+        cmd.revert(&mut doc);
+        assert_eq!(doc, baseline, "revert restores the full tree");
     }
 
     #[test]

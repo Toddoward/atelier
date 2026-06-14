@@ -678,6 +678,26 @@ impl AtelierApp {
         st.editor.selection = Some(root);
     }
 
+    /// Flatten the whole document to a single raster layer (spec 0040).
+    fn flatten_document(&mut self) {
+        use atelier_core::{LayerProps, Node, NodeKind, RasterContent, TileMap};
+        let Some(st) = &mut self.state else { return };
+        if st.editor.doc.node_count() <= 2 {
+            return; // root + 0/1 layer: nothing to flatten
+        }
+        let [w, h] = st.editor.doc.size;
+        let rgba = atelier_raster::composite_rgba8(&st.editor.doc, w, h);
+        let tiles = TileMap::from_rgba(w, h, &rgba);
+        let raster = Node::new(
+            LayerProps::named("Flattened"),
+            NodeKind::Raster(RasterContent { tiles, ..Default::default() }),
+        );
+        let cmd = atelier_core::command::FlattenDocument::new(&mut st.editor.doc, raster);
+        st.editor.apply(Box::new(cmd));
+        st.editor.selection = None;
+        st.selected_extra.clear();
+    }
+
     /// Rasterize the selected vector layer into a raster layer (INT-2).
     fn rasterize_selected_layer(&mut self) {
         use atelier_core::{NodeKind, RasterContent};
@@ -1067,6 +1087,10 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.rasterize_selected_layer();
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(has, egui::Button::new("Flatten Image")).clicked() {
+                        self.flatten_document();
                         ui.close_menu();
                     }
                     ui.separator();
@@ -2286,6 +2310,43 @@ mod ui_tests {
             h.state().state.as_ref().unwrap().editor.doc.node_count(),
             n0,
             "undo group removed it"
+        );
+    }
+
+    /// Spec 0040: flatten the document into one raster layer; undo restores tree.
+    #[test]
+    fn flatten_image_and_undo() {
+        let mut h = harness();
+        create_doc(&mut h);
+        // Two layers with content.
+        for color in [[255u8, 0, 0, 255], [0, 0, 255, 128]] {
+            click_label(&mut h, "+ Layer");
+            let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(0, 0, 16, 16, color);
+                c.tiles = t;
+            }
+        }
+        h.run();
+        let n_before = h.state().state.as_ref().unwrap().editor.doc.node_count();
+        assert_eq!(n_before, 3, "root + 2 layers");
+
+        h.state_mut().flatten_document();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            // root + exactly one raster layer.
+            assert_eq!(st.editor.doc.node_count(), 2, "flattened to one layer");
+            let only = st.editor.doc.children(st.editor.doc.root())[0];
+            assert!(matches!(st.editor.doc.node(only).unwrap().kind, NodeKind::Raster(_)));
+        }
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n_before,
+            "undo restored the layer tree"
         );
     }
 

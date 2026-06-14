@@ -3,7 +3,25 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ag (spec 0039 — radial gradient DONE)
+## Last session: 2026-06-13-ah (spec 0040 — flatten image DONE)
+
+### Done
+- **Spec 0040 ☑** — Flatten Image: `command::FlattenDocument` (replaces tree with one
+  pre-built raster; remove last→first / restore first→last for correct order; app builds the
+  raster via composite_rgba8 + from_rgba so core stays compositor-free). Layer → Flatten Image,
+  undoable. core 41 / app 43 tests green, clippy clean, smoke clean.
+
+### Next
+1. **Merge down** (two adjacent layers); pattern fill (RAS-9).
+2. **INT-4 cross-paste**, **smart objects** (DOC-5), **z-interleaved compositing** (Phase 5).
+3. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; verify
+   cross-platform — the big gated item).
+
+### Watch out (additions)
+- Structural multi-node commands: remove children last→first, restore first→last (else order
+  reverses). Snapshot test baselines AFTER any `::new` that allocs a NodeId.
+
+## Previous session: 2026-06-13-ag (spec 0039 — radial gradient DONE)
 
 ### Done
 - **Spec 0039 ☑** — radial gradient: `gradient_region_radial` + `BrushSettings.gradient_radial`
