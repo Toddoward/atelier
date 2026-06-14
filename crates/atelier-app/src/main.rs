@@ -678,6 +678,54 @@ impl AtelierApp {
         st.editor.selection = Some(root);
     }
 
+    /// Merge the selected raster layer down into the raster layer directly
+    /// below it (same parent), as one undoable step (spec 0041). No-op unless
+    /// both are raster layers.
+    fn merge_down(&mut self) {
+        use atelier_core::command::{Batch, RemoveNode, ReplaceNodeKind, SetBlend, SetOpacity};
+        use atelier_core::{BlendMode, Document, LayerProps, Node, NodeKind, RasterContent, TileMap};
+        let Some(st) = &mut self.state else { return };
+        let Some(sel) = st.editor.selection else { return };
+        let doc = &st.editor.doc;
+        let Some(parent) = doc.node(sel).and_then(|n| n.parent) else { return };
+        let siblings = doc.children(parent);
+        let Some(pos) = siblings.iter().position(|&c| c == sel) else { return };
+        // Children are top-first → the layer "below" is the next index.
+        let Some(&below) = siblings.get(pos + 1) else { return };
+        let both_raster = matches!(doc.node(sel).map(|n| &n.kind), Some(NodeKind::Raster(_)))
+            && matches!(doc.node(below).map(|n| &n.kind), Some(NodeKind::Raster(_)));
+        if !both_raster {
+            return;
+        }
+        // Composite [below, sel] in a temp 2-layer doc, honoring their props.
+        let [w, h] = doc.size;
+        let below_name = doc.node(below).expect("below").props.name.clone();
+        let mut tmp = Document::new([w, h], doc.focus);
+        let root = tmp.root();
+        for &src in &[below, sel] {
+            let mut node = doc.node(src).expect("src").clone();
+            node.parent = None;
+            node.children.clear();
+            let id = tmp.alloc_id();
+            // Insert at 0 so the later one (sel) ends up on top.
+            tmp.insert_node(id, node, root, 0).expect("temp insert");
+        }
+        let rgba = atelier_raster::composite_rgba8(&tmp, w, h);
+        let merged = Node::new(
+            LayerProps::named(below_name),
+            NodeKind::Raster(RasterContent { tiles: TileMap::from_rgba(w, h, &rgba), ..Default::default() }),
+        );
+        let cmds: Vec<Box<dyn atelier_core::Command>> = vec![
+            Box::new(RemoveNode::new(&st.editor.doc, sel)),
+            Box::new(ReplaceNodeKind::new(&st.editor.doc, below, merged.kind.clone(), "merge")),
+            Box::new(SetBlend::new(&st.editor.doc, below, BlendMode::Normal)),
+            Box::new(SetOpacity::new(&st.editor.doc, below, 1.0)),
+        ];
+        st.editor.apply(Box::new(Batch::new(cmds, "Merge Down")));
+        st.editor.selection = Some(below);
+        st.selected_extra.clear();
+    }
+
     /// Flatten the whole document to a single raster layer (spec 0040).
     fn flatten_document(&mut self) {
         use atelier_core::{LayerProps, Node, NodeKind, RasterContent, TileMap};
@@ -906,6 +954,10 @@ impl AtelierApp {
             } else if ctx.input_mut(|i| i.consume_shortcut(&group)) {
                 self.group_selected();
             }
+            let merge = KeyboardShortcut::new(CMD, Key::E);
+            if ctx.input_mut(|i| i.consume_shortcut(&merge)) {
+                self.merge_down();
+            }
         }
 
         // Deselect (Ctrl+D).
@@ -1087,6 +1139,13 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.rasterize_selected_layer();
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new("Merge Down\t(Ctrl+E)"))
+                        .clicked()
+                    {
+                        self.merge_down();
                         ui.close_menu();
                     }
                     if ui.add_enabled(has, egui::Button::new("Flatten Image")).clicked() {
@@ -2310,6 +2369,53 @@ mod ui_tests {
             h.state().state.as_ref().unwrap().editor.doc.node_count(),
             n0,
             "undo group removed it"
+        );
+    }
+
+    /// Spec 0041: merge a raster layer down into the one below; undoable.
+    #[test]
+    fn merge_down_combines_two_rasters_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        // Bottom (blue), then top (red) — both fill the same 16×16 area.
+        click_label(&mut h, "+ Layer");
+        let bottom = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        click_label(&mut h, "+ Layer");
+        let top = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            for (id, col) in [(bottom, [0u8, 0, 255, 255]), (top, [255u8, 0, 0, 255])] {
+                if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                    let mut t = atelier_core::TileMap::new();
+                    t.fill_rect(0, 0, 16, 16, col);
+                    c.tiles = t;
+                }
+            }
+            st.editor.selection = Some(top); // merge top down into bottom
+        }
+        h.run();
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+
+        h.state_mut().merge_down();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            assert_eq!(st.editor.doc.node_count(), n0 - 1, "two layers became one");
+            let merged = st.editor.selection.unwrap();
+            assert_eq!(merged, bottom, "selection on the merged (lower) layer");
+            match &st.editor.doc.node(merged).unwrap().kind {
+                NodeKind::Raster(c) => {
+                    // Opaque red on top fully covers blue → merged is red.
+                    assert_eq!(c.tiles.pixel(8, 8), [255, 0, 0, 255], "top covers bottom");
+                }
+                _ => panic!("merged is raster"),
+            }
+        }
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0,
+            "undo restored both layers"
         );
     }
 

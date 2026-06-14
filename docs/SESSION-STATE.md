@@ -3,7 +3,26 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ah (spec 0040 — flatten image DONE)
+## Last session: 2026-06-13-ai (spec 0041 — merge down DONE)
+
+### Done
+- **Spec 0041 ☑** — Merge Down (Ctrl+E / Layer menu): `merge_down` composites
+  [below, selected] in a temp 2-layer doc, builds a raster, and applies a Batch
+  (RemoveNode + ReplaceNodeKind + reset blend/opacity). Raster+raster only (vectors aren't in
+  the CPU compositor yet). app 44 tests green, clippy clean, smoke clean.
+
+### Next
+1. **Pattern fill**; **merge-visible** (no dep).
+2. **INT-4 cross-paste**, **smart objects** (DOC-5), **z-interleaved compositing** (Phase 5 —
+   would also unblock merging vector layers).
+3. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; verify
+   cross-platform — the big gated item).
+
+### Watch out (additions)
+- Merge/flatten via temp-doc composite then Batch of existing commands. Merged pixels bake in
+  blend/opacity, so reset the surviving layer's props to Normal/100%.
+
+## Previous session: 2026-06-13-ah (spec 0040 — flatten image DONE)
 
 ### Done
 - **Spec 0040 ☑** — Flatten Image: `command::FlattenDocument` (replaces tree with one
