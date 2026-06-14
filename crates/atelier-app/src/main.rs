@@ -531,6 +531,57 @@ impl AtelierApp {
         st.editor.selection = Some(id);
     }
 
+    /// Fill the selection (or whole layer) of the selected raster layer with the
+    /// brush color, undoably (RAS-9, spec 0036).
+    fn fill_selection(&mut self) {
+        use atelier_core::{NodeKind, TILE_SIZE};
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let offset = match st.editor.doc.node(id).map(|n| (&n.kind, &n.props)) {
+            Some((NodeKind::Raster(c), p)) if p.visible && !p.locked => c.offset,
+            _ => return,
+        };
+        let color = st.brush.color;
+        let mask = st.editor.doc.selection.clone();
+        let [w, h] = st.editor.doc.size;
+        let region = match mask.as_deref().and_then(|m| m.bounds()) {
+            Some(b) => {
+                [b[0].max(0), b[1].max(0), b[2].min(w as i32), b[3].min(h as i32)]
+            }
+            None => [0, 0, w as i32, h as i32],
+        };
+        if region[0] >= region[2] || region[1] >= region[3] {
+            return;
+        }
+        // Capture touched tiles (layer space) for undo, then fill.
+        let t = TILE_SIZE as i32;
+        let lx0 = (region[0] - offset[0]).div_euclid(t);
+        let ly0 = (region[1] - offset[1]).div_euclid(t);
+        let lx1 = (region[2] - 1 - offset[0]).div_euclid(t);
+        let ly1 = (region[3] - 1 - offset[1]).div_euclid(t);
+        let mut before = Vec::new();
+        {
+            let NodeKind::Raster(c) = &st.editor.doc.node(id).expect("checked").kind else {
+                return;
+            };
+            for ty in ly0..=ly1 {
+                for tx in lx0..=lx1 {
+                    before.push(((tx, ty), c.tiles.tile_at((tx, ty)).cloned()));
+                }
+            }
+        }
+        {
+            let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).expect("checked").kind
+            else {
+                return;
+            };
+            atelier_raster::fill_region(&mut c.tiles, color, offset, region, mask.as_deref());
+        }
+        let cmd =
+            atelier_core::command::PaintTiles::from_capture(&st.editor.doc, id, "Fill", before);
+        st.editor.history.push_committed(Box::new(cmd));
+    }
+
     /// Export the flattened document to an image file (FMT-4, spec 0033).
     fn export_to(&mut self, path: PathBuf) {
         let Some(st) = &self.state else { return };
@@ -1115,6 +1166,10 @@ impl AtelierApp {
                     ui.separator();
                     let has_sel = self.state.as_ref().is_some_and(|s| s.editor.selection.is_some());
                     let has_clip = self.state.as_ref().is_some_and(|s| s.clipboard.is_some());
+                    if ui.add_enabled(has_sel, egui::Button::new("Fill with Color")).clicked() {
+                        self.fill_selection();
+                        ui.close_menu();
+                    }
                     if ui.add_enabled(has_sel, egui::Button::new("Copy Layer\t(Ctrl+C)")).clicked() {
                         self.copy_selected_layer();
                         ui.close_menu();
@@ -2245,6 +2300,49 @@ mod ui_tests {
             n0,
             "undo removed the duplicate"
         );
+    }
+
+    /// Spec 0036: fill the selection with the brush color; undoable.
+    #[test]
+    fn fill_selection_with_color_and_undo() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        // Empty the layer, set a rectangular selection [0,0,4,4], pick red.
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                c.tiles = atelier_core::TileMap::new();
+            }
+            st.brush.color = [1.0, 0.0, 0.0, 1.0];
+            let mut m = atelier_core::Mask::new();
+            for y in 0..4 {
+                for x in 0..4 {
+                    m.set(x, y, 255);
+                }
+            }
+            let cmd = atelier_core::command::SetSelection::new(
+                &st.editor.doc,
+                Some(std::sync::Arc::new(m)),
+                "sel",
+            );
+            st.editor.apply(Box::new(cmd));
+        }
+        h.state_mut().fill_selection();
+        h.run();
+        let pixel = |h: &Harness<'static, AtelierApp>, x: i32, y: i32| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Raster(c) => c.tiles.pixel(x, y),
+                _ => panic!(),
+            }
+        };
+        assert_eq!(pixel(&h, 2, 2), [255, 0, 0, 255], "inside selection filled");
+        assert_eq!(pixel(&h, 6, 6), [0, 0, 0, 0], "outside selection empty");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(pixel(&h, 2, 2), [0, 0, 0, 0], "undo cleared the fill");
     }
 
     /// Spec 0035: eyedropper samples the composited color at a doc pixel.

@@ -3,7 +3,24 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ac (spec 0035 — eyedropper DONE)
+## Last session: 2026-06-13-ad (spec 0036 — fill selection DONE)
+
+### Done
+- **Spec 0036 ☑** — fill selection/layer with brush color: `atelier-raster::fill::fill_region`
+  (mask+offset-aware, coverage-blended) + app `fill_selection` (Edit → Fill with Color),
+  undoable via PaintTiles. raster +3 / app 39 tests green, clippy clean, smoke clean.
+
+### Next
+1. **Gradient & pattern fills** (RAS-9 remainder); **flood-fill** (contiguous) bucket.
+2. **INT-4 cross-paste**, **smart objects** (DOC-5), **z-interleaved compositing** (Phase 5).
+3. **Phase 6 color management** (lcms2 — system lib; add `liblcms2-dev` to ubuntu CI apt or
+   vendor; verify cross-platform before committing — the big gated item).
+
+### Watch out (additions)
+- Fill reuses `PaintTiles` (capture touched tile range → fill → push_committed). Feathered
+  selections fill soft via coverage-scaled alpha.
+
+## Previous session: 2026-06-13-ac (spec 0035 — eyedropper DONE)
 
 ### Done
 - **Spec 0035 ☑** — Eyedropper tool (key `I`): `canvas::sample_composite` reads the
