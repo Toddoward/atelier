@@ -12,7 +12,7 @@ use std::path::Path;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 const MANIFEST: &str = "manifest.json";
 
 #[derive(Debug, thiserror::Error)]
@@ -52,6 +52,18 @@ pub fn save_atl(doc: &Document, path: &Path) -> Result<(), AtlError> {
             for (&(tx, ty), tile) in content.tiles.tiles() {
                 zip.start_file(format!("tiles/{}/{}_{}.bin", id.0, tx, ty), stored)?;
                 zip.write_all(&lz4_flex::compress_prepend_size(tile.bytes()))?;
+            }
+            // Layer mask (schema v2): header (x0,y0,w,h i32 LE) + coverage bytes.
+            if let Some((x0, y0, w, h, cov)) = content.mask.as_ref().and_then(|m| m.to_region_bytes())
+            {
+                let mut buf = Vec::with_capacity(16 + cov.len());
+                buf.extend_from_slice(&x0.to_le_bytes());
+                buf.extend_from_slice(&y0.to_le_bytes());
+                buf.extend_from_slice(&w.to_le_bytes());
+                buf.extend_from_slice(&h.to_le_bytes());
+                buf.extend_from_slice(&cov);
+                zip.start_file(format!("masks/{}.bin", id.0), stored)?;
+                zip.write_all(&lz4_flex::compress_prepend_size(&buf))?;
             }
         }
     }
@@ -94,6 +106,35 @@ pub fn load_atl(path: &Path) -> Result<Document, AtlError> {
         match doc.node_mut(id).map(|n| &mut n.kind) {
             Some(NodeKind::Raster(content)) => content.tiles.insert_tile((tx, ty), tile),
             _ => return Err(AtlError::BadTilePart(name)),
+        }
+    }
+
+    // Reattach layer mask parts (schema v2).
+    let mask_names: Vec<String> =
+        zip.file_names().filter(|n| n.starts_with("masks/")).map(String::from).collect();
+    for name in mask_names {
+        let id = name
+            .strip_prefix("masks/")
+            .and_then(|r| r.strip_suffix(".bin"))
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(NodeId)
+            .ok_or_else(|| AtlError::BadTilePart(name.clone()))?;
+        let mut compressed = Vec::new();
+        zip.by_name(&name)?.read_to_end(&mut compressed)?;
+        let buf = lz4_flex::decompress_size_prepended(&compressed)
+            .map_err(|_| AtlError::BadTilePart(name.clone()))?;
+        if buf.len() < 16 {
+            return Err(AtlError::BadTilePart(name));
+        }
+        let rd = |o: usize| i32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+        let (x0, y0, w, h) = (rd(0), rd(4), rd(8) as u32, rd(12) as u32);
+        let cov = &buf[16..];
+        if cov.len() != (w as usize * h as usize) {
+            return Err(AtlError::BadTilePart(name));
+        }
+        let mask = atelier_core::Mask::from_region_bytes(x0, y0, w, h, cov);
+        if let Some(NodeKind::Raster(content)) = doc.node_mut(id).map(|n| &mut n.kind) {
+            content.mask = Some(mask);
         }
     }
     Ok(doc)
@@ -298,6 +339,41 @@ mod tests {
                 assert_eq!(c.shapes[0].fill, Some([0.2, 0.4, 0.6, 1.0]));
             }
             _ => panic!("vector expected"),
+        }
+    }
+
+    #[test]
+    fn round_trips_layer_mask() {
+        use atelier_core::{LayerProps, Mask, NodeKind, RasterContent};
+        let mut doc = Document::new([16, 16], ProjectFocus::Raster);
+        let root = doc.root();
+        let mut content = RasterContent::default();
+        content.tiles.fill_rect(0, 0, 16, 16, [10, 20, 30, 255]);
+        let mut m = Mask::new();
+        for y in 0..16 {
+            for x in 0..8 {
+                m.set(x, y, 200);
+            }
+        }
+        content.mask = Some(m);
+        let mut add = AddNode::new(
+            &mut doc,
+            Node::new(LayerProps::named("masked"), NodeKind::Raster(content)),
+            root,
+            0,
+        );
+        add.apply(&mut doc);
+        let path = temp("mask");
+        save_atl(&doc, &path).unwrap();
+        let loaded = load_atl(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        match &loaded.node(add.id).unwrap().kind {
+            NodeKind::Raster(c) => {
+                let mask = c.mask.as_ref().expect("mask restored");
+                assert_eq!(mask.get(3, 3), 200, "masked-in coverage preserved");
+                assert_eq!(mask.get(12, 3), 0, "outside mask stays 0");
+            }
+            _ => panic!("raster expected"),
         }
     }
 

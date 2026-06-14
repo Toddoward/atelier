@@ -3,7 +3,17 @@
 Open, versioned container. Spec evolves per phase; loaders must reject
 `schema_version` greater than they understand (tested) and migrate older ones.
 
-## Schema v1 (Phase 2, current)
+## Schema v2 (current)
+
+Adds, on top of v1:
+
+| Part | Content |
+|------|---------|
+| `masks/<node-id>.bin` | one per raster layer that has a layer mask: lz4 (size-prepended) of a 16-byte header (`x0,y0,w,h` as i32 LE) + `w·h` coverage bytes over the mask's tight bounds (spec 0048) |
+
+v1 files load unchanged (no mask parts → masks stay `None`); no JSON migration needed.
+
+## Schema v1 (Phase 2)
 
 ZIP archive:
 

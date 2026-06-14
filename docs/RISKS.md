@@ -84,12 +84,11 @@ adjustment layers before that switch flips. Tracked; do not wire GPU→canvas un
 
 ## R-14 · Session-only data not yet persisted in `.atl`
 Several non-JSON payloads are `#[serde(skip)]` and not yet written to the `.atl` container:
-raster layer masks (spec 0047) and (future) smart-object embedded sub-documents. Raster
-*tiles* are skipped too but ARE saved via binary parts (schema v1); masks/embedded docs are
-not. **Mitigation:** these are session-only today; before any format freeze (Phase 7) the
-`.atl` writer/reader must add parts for masks (and embedded smart-object docs) with a schema
-bump + migration, or the save path must report them in the degradation report. Tracked; do
-not freeze `.atl` until closed.
+(future) smart-object embedded sub-documents. **Update (spec 0048):** layer masks are now
+persisted as `.atl` v2 binary parts — closed. Remaining: embedded smart-object docs (when
+smart objects land). **Mitigation:** before any format freeze (Phase 7) the `.atl`
+writer/reader must add parts for embedded smart-object docs (schema bump), or the save path
+must report them in the degradation report. Tracked; do not freeze `.atl` until closed.
 
 ## Plan-review verdict
 Goal is sound and achievable **as tiered**: the original prompt's flexibility clauses

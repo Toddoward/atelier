@@ -3,7 +3,25 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ao (spec 0047 — layer masks DONE)
+## Last session: 2026-06-13-ap (spec 0048 — persist layer masks DONE)
+
+### Done
+- **Spec 0048 ☑** — `.atl` schema **v2**: layer masks persisted as `masks/<id>.bin` parts
+  (`Mask::to_region_bytes`/`from_region_bytes`); v0/v1 files still load. Closes R-14 for masks
+  (embedded smart-object docs remain). io 15 tests green (mask round-trip), clippy clean, smoke.
+  FORMAT-ATL.md updated to v2.
+
+### Next
+1. **Paint-on-mask** edit mode; **smart objects** (DOC-5 — embedded doc + its own .atl parts).
+2. **z-interleaved compositing**, **INT-4 cross-paste**.
+3. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; verify
+   cross-platform — big gated item).
+
+### Watch out (additions)
+- `.atl` is schema v2 now; the loader handles v0/v1/v2. Mask parts are additive (no JSON
+  migration). When adding more skipped payloads, follow the same binary-part pattern + bump.
+
+## Previous session: 2026-06-13-ao (spec 0047 — layer masks DONE)
 
 ### Done
 - **Spec 0047 ☑** — layer masks (DOC-4): `RasterContent.mask: Option<Mask>` (serde-skip),

@@ -91,6 +91,34 @@ impl Mask {
         (x0 <= x1).then_some([x0, y0, x1, y1])
     }
 
+    /// Dump the mask as `(x0, y0, w, h, row-major coverage)` over its tight
+    /// bounds, for `.atl` persistence (spec 0048). None when empty.
+    pub fn to_region_bytes(&self) -> Option<(i32, i32, u32, u32, Vec<u8>)> {
+        let [x0, y0, x1, y1] = self.tight_bounds()?;
+        let (w, h) = ((x1 - x0) as u32, (y1 - y0) as u32);
+        let mut v = Vec::with_capacity((w * h) as usize);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                v.push(self.get(x, y));
+            }
+        }
+        Some((x0, y0, w, h, v))
+    }
+
+    /// Rebuild a mask from `to_region_bytes` output.
+    pub fn from_region_bytes(x0: i32, y0: i32, w: u32, h: u32, bytes: &[u8]) -> Self {
+        let mut m = Mask::new();
+        for j in 0..h as i32 {
+            for i in 0..w as i32 {
+                let v = bytes[(j * w as i32 + i) as usize];
+                if v > 0 {
+                    m.set(x0 + i, y0 + j, v);
+                }
+            }
+        }
+        m
+    }
+
     pub fn prune_blank(&mut self) {
         self.tiles.retain(|_, t| t.iter().any(|&v| v != 0));
     }
