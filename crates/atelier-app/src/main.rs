@@ -539,6 +539,50 @@ impl AtelierApp {
         st.editor.selection = Some(id);
     }
 
+    /// Build a document selection from the selected layer's alpha (INT-5,
+    /// spec 0044): raster uses its tiles' alpha, vector is rasterized. Undoable.
+    fn selection_from_layer(&mut self) {
+        use atelier_core::{Mask, NodeKind};
+        let Some(st) = &mut self.state else { return };
+        let Some(id) = st.editor.selection else { return };
+        let [w, h] = st.editor.doc.size;
+        let mut mask = Mask::new();
+        match &st.editor.doc.node(id).expect("selected").kind {
+            NodeKind::Raster(c) => {
+                let off = c.offset;
+                for y in 0..h as i32 {
+                    for x in 0..w as i32 {
+                        let a = c.tiles.pixel(x - off[0], y - off[1])[3];
+                        if a > 0 {
+                            mask.set(x, y, a);
+                        }
+                    }
+                }
+            }
+            NodeKind::Vector(content) => {
+                let rgba = atelier_raster::rasterize_vector(content, w, h);
+                for y in 0..h as i32 {
+                    for x in 0..w as i32 {
+                        let a = rgba.pixel(x, y)[3];
+                        if a > 0 {
+                            mask.set(x, y, a);
+                        }
+                    }
+                }
+            }
+            _ => return,
+        }
+        if mask.is_empty() {
+            return;
+        }
+        let cmd = atelier_core::command::SetSelection::new(
+            &st.editor.doc,
+            Some(std::sync::Arc::new(mask)),
+            "Selection from Layer",
+        );
+        st.editor.apply(Box::new(cmd));
+    }
+
     /// Define the fill pattern from the selected raster layer's content bounds
     /// (or selection bounds), copying its pixels (spec 0043).
     fn define_pattern(&mut self) {
@@ -1302,6 +1346,21 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.set_selection("Invert Selection", |m, size| Some(m.inverted(size)));
+                        ui.close_menu();
+                    }
+                    let layer_selectable = self.state.as_ref().is_some_and(|s| {
+                        s.editor.selection.and_then(|id| s.editor.doc.node(id)).is_some_and(|n| {
+                            matches!(
+                                n.kind,
+                                atelier_core::NodeKind::Raster(_) | atelier_core::NodeKind::Vector(_)
+                            )
+                        })
+                    });
+                    if ui
+                        .add_enabled(layer_selectable, egui::Button::new("From Layer"))
+                        .clicked()
+                    {
+                        self.selection_from_layer();
                         ui.close_menu();
                     }
                     ui.separator();
@@ -2738,6 +2797,61 @@ mod ui_tests {
 
         send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
         assert_eq!(alpha(&h, 1, 30), 0, "undo cleared the gradient");
+    }
+
+    /// Spec 0044: build a selection from a layer's alpha (raster and vector).
+    #[test]
+    fn selection_from_layer_raster_and_vector() {
+        // Raster: alpha square → selection covers it.
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let r = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(r).unwrap().kind {
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(2, 2, 6, 6, [255, 255, 255, 255]);
+                c.tiles = t;
+            }
+        }
+        h.state_mut().selection_from_layer();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            let m = st.editor.doc.selection.as_ref().expect("selection set");
+            assert!(m.get(3, 3) > 0, "inside the alpha square selected");
+            assert_eq!(m.get(10, 10), 0, "outside not selected");
+        }
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(h.state().state.as_ref().unwrap().editor.doc.selection.is_none(), "undo");
+
+        // Vector: a filled rect shape → selection covers it.
+        {
+            use atelier_core::atelier_vector::{Path, Shape};
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let content = atelier_core::VectorContent {
+                shapes: vec![Shape::filled(Path::rect(0.0, 0.0, 12.0, 12.0), [1.0; 4])],
+            };
+            let cmd = atelier_core::command::AddNode::new(
+                &mut st.editor.doc,
+                atelier_core::Node::new(
+                    atelier_core::LayerProps::named("v"),
+                    atelier_core::NodeKind::Vector(content),
+                ),
+                root,
+                0,
+            );
+            let vid = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(vid);
+        }
+        h.state_mut().selection_from_layer();
+        h.run();
+        let st = h.state().state.as_ref().unwrap();
+        let m = st.editor.doc.selection.as_ref().expect("vector selection");
+        assert!(m.get(5, 5) > 0, "inside vector shape selected");
     }
 
     /// Spec 0043: define a pattern from one layer, tile-fill another; undoable.

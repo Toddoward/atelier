@@ -3,7 +3,25 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ak (spec 0043 — pattern fill DONE)
+## Last session: 2026-06-13-al (spec 0044 — selection from layer DONE)
+
+### Done
+- **Spec 0044 ☑** — Select → From Layer (INT-5): `selection_from_layer` builds a doc selection
+  from the selected layer's alpha (raster tiles, offset aware; vector via rasterize_vector AA),
+  undoable. app 47 tests green, clippy clean, smoke clean.
+
+### Next
+1. **INT-5 reverse** (selection→vector path) + combine-with-existing; **INT-4 cross-paste**.
+2. **Smart objects** (DOC-5 — embedded Box<Document>; needs recursive compositor + .atl tile
+   handling, sizable); **z-interleaved raster+vector compositing** (Phase 5).
+3. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; verify
+   cross-platform — the big gated item).
+
+### Watch out (additions)
+- selection_from_layer replaces the current selection (no add/subtract yet). Vector path uses
+  AA rasterization → soft selection edges.
+
+## Previous session: 2026-06-13-ak (spec 0043 — pattern fill DONE)
 
 ### Done
 - **Spec 0043 ☑** — define pattern + pattern fill: `fill::fill_pattern` (tiled, anchored to
