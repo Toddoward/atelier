@@ -3,7 +3,24 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ae (spec 0037 — gradient fill DONE)
+## Last session: 2026-06-13-af (spec 0038 — paint bucket DONE)
+
+### Done
+- **Spec 0038 ☑** — Paint Bucket tool (key `K`): `apply_bucket` composes `magic_wand` (flood
+  select on active layer, brush tolerance) + `fill_region` + `PaintTiles` undo. app 41 tests
+  green, clippy clean, smoke clean. RAS-9 fill set complete (solid/gradient/flood; patterns +
+  radial gradients remain).
+
+### Next
+1. **Radial/multi-stop gradients**, pattern fill (RAS-9 polish).
+2. **INT-4 cross-paste**, **smart objects** (DOC-5), **z-interleaved compositing** (Phase 5).
+3. **Phase 6 color management** (lcms2 — add liblcms2-dev to ubuntu CI apt or vendor; verify
+   cross-platform first — the big gated item).
+
+### Watch out (additions)
+- Bucket = magic_wand + fill_region + PaintTiles (no new kernel); contiguous + same-layer.
+
+## Previous session: 2026-06-13-ae (spec 0037 — gradient fill DONE)
 
 ### Done
 - **Spec 0037 ☑** — Gradient tool (key `G`): `atelier-raster::fill::gradient_region` (two-stop

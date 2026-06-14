@@ -29,6 +29,7 @@ pub fn tools_ui(ui: &mut egui::Ui, state: &mut EditorState) {
         (ActiveTool::ShapeStar, "Star"),
         (ActiveTool::Eyedropper, "Eyedropper (I)"),
         (ActiveTool::Gradient, "Gradient (G)"),
+        (ActiveTool::Bucket, "Paint Bucket (K)"),
         (ActiveTool::Pen, "Pen (P)"),
         (ActiveTool::DirectSelect, "Direct Select (A)"),
     ] {

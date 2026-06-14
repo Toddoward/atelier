@@ -404,6 +404,15 @@ fn handle_tools(
                 }
             }
         }
+        ActiveTool::Bucket => {
+            // Flood-fill the contiguous region under the click with the brush color.
+            if response.clicked() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let d = pointer_doc(pos);
+                    apply_bucket(state, [d[0].floor() as i32, d[1].floor() as i32]);
+                }
+            }
+        }
         ActiveTool::Gradient => {
             // Drag defines the axis; on release fill selection/layer with a
             // foreground→transparent linear gradient (spec 0037).
@@ -431,6 +440,55 @@ fn handle_tools(
             }
         }
     }
+}
+
+/// Test hook for the paint-bucket (avoids synthesizing a canvas click).
+#[cfg(test)]
+pub(crate) fn apply_bucket_for_test(state: &mut EditorState, seed: [i32; 2]) {
+    apply_bucket(state, seed);
+}
+
+/// Paint-bucket: flood-select the contiguous region under `seed` (doc px) on
+/// the active raster layer and fill it with the brush color. Undoable (0038).
+fn apply_bucket(state: &mut EditorState, seed: [i32; 2]) {
+    use atelier_core::{NodeKind, TILE_SIZE};
+    let Some(id) = editable_raster(state) else { return };
+    let offset = raster_offset(state, id);
+    let size = state.editor.doc.size;
+    let tol = state.brush.wand_tolerance;
+    let color = state.brush.color;
+    let mask = match &state.editor.doc.node(id).expect("checked").kind {
+        NodeKind::Raster(c) => atelier_raster::selection::magic_wand(&c.tiles, offset, seed, tol, size),
+        _ => return,
+    };
+    let Some(region) = mask.bounds() else { return };
+    let region = [
+        region[0].max(0),
+        region[1].max(0),
+        region[2].min(size[0] as i32),
+        region[3].min(size[1] as i32),
+    ];
+    if region[0] >= region[2] || region[1] >= region[3] {
+        return;
+    }
+    let t = TILE_SIZE as i32;
+    let (lx0, ly0) = ((region[0] - offset[0]).div_euclid(t), (region[1] - offset[1]).div_euclid(t));
+    let (lx1, ly1) =
+        ((region[2] - 1 - offset[0]).div_euclid(t), (region[3] - 1 - offset[1]).div_euclid(t));
+    let mut before = Vec::new();
+    if let NodeKind::Raster(c) = &state.editor.doc.node(id).expect("checked").kind {
+        for ty in ly0..=ly1 {
+            for tx in lx0..=lx1 {
+                before.push(((tx, ty), c.tiles.tile_at((tx, ty)).cloned()));
+            }
+        }
+    }
+    if let NodeKind::Raster(c) = &mut state.editor.doc.node_mut(id).expect("checked").kind {
+        atelier_raster::fill_region(&mut c.tiles, color, offset, region, Some(&mask));
+    }
+    let cmd =
+        atelier_core::command::PaintTiles::from_capture(&state.editor.doc, id, "Paint Bucket", before);
+    state.editor.history.push_committed(Box::new(cmd));
 }
 
 /// Fill the selection (or whole layer) of the selected raster layer with a

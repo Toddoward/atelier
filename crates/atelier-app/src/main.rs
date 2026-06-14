@@ -53,6 +53,7 @@ pub enum ActiveTool {
     DirectSelect,
     Eyedropper,
     Gradient,
+    Bucket,
 }
 
 /// Which primitive a shape-tool drag produces (spec 0014/0015).
@@ -928,6 +929,9 @@ impl AtelierApp {
                     // Plain G = gradient; Ctrl+G (group) is handled above.
                     if i.key_pressed(Key::G) && i.modifiers.is_none() {
                         st.tool = ActiveTool::Gradient;
+                    }
+                    if i.key_pressed(Key::K) {
+                        st.tool = ActiveTool::Bucket;
                     }
                     if i.key_pressed(Key::P) {
                         st.tool = ActiveTool::Pen;
@@ -2305,6 +2309,42 @@ mod ui_tests {
             n0,
             "undo removed the duplicate"
         );
+    }
+
+    /// Spec 0038: paint bucket flood-fills a contiguous region; undoable.
+    #[test]
+    fn paint_bucket_flood_fills_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        let id = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            if let NodeKind::Raster(c) = &mut st.editor.doc.node_mut(id).unwrap().kind {
+                // A solid red 6×6 square; rest transparent.
+                let mut t = atelier_core::TileMap::new();
+                t.fill_rect(0, 0, 6, 6, [255, 0, 0, 255]);
+                c.tiles = t;
+            }
+            st.brush.color = [0.0, 0.0, 1.0, 1.0]; // blue
+            st.brush.wand_tolerance = 0;
+        }
+        let pixel = |h: &Harness<'static, AtelierApp>, x: i32, y: i32| {
+            let st = h.state().state.as_ref().unwrap();
+            match &st.editor.doc.node(id).unwrap().kind {
+                NodeKind::Raster(c) => c.tiles.pixel(x, y),
+                _ => panic!(),
+            }
+        };
+        // Bucket-fill the red square (click at 2,2) → blue.
+        canvas::apply_bucket_for_test(h.state_mut().state.as_mut().unwrap(), [2, 2]);
+        h.run();
+        assert_eq!(pixel(&h, 2, 2), [0, 0, 255, 255], "red square recolored blue");
+        assert_eq!(pixel(&h, 5, 5), [0, 0, 255, 255], "whole contiguous square filled");
+        assert_eq!(pixel(&h, 10, 10), [0, 0, 0, 0], "outside region untouched");
+
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(pixel(&h, 2, 2), [255, 0, 0, 255], "undo restored red");
     }
 
     /// Spec 0037: gradient fill across a layer (foreground→transparent); undoable.
