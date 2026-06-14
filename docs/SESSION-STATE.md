@@ -3,7 +3,25 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-13-ai (spec 0041 — merge down DONE)
+## Last session: 2026-06-13-aj (spec 0042 — merge visible DONE)
+
+### Done
+- **Spec 0042 ☑** — Merge Visible: `command::MergeVisible` merges visible top-level layers
+  into one raster (composite auto-skips hidden), keeping hidden layers in place; revert
+  restores targets at original indices. Layer → Merge Visible. core 42 / app 45 tests green,
+  clippy clean, smoke clean.
+
+### Next
+1. **Pattern fill** (RAS-9 last bit); merge-down for vectors once z-interleaved.
+2. **INT-4 cross-paste**, **smart objects** (DOC-5), **z-interleaved compositing** (Phase 5).
+3. **Phase 6 color management** (lcms2 — liblcms2-dev on ubuntu CI or vendor; verify
+   cross-platform — the big gated item).
+
+### Watch out (additions)
+- Structural multi-node commands (Flatten/MergeVisible/Group): remove high-index-first,
+  restore low-index-first; snapshot test baselines AFTER `::new` (id alloc).
+
+## Previous session: 2026-06-13-ai (spec 0041 — merge down DONE)
 
 ### Done
 - **Spec 0041 ☑** — Merge Down (Ctrl+E / Layer menu): `merge_down` composites

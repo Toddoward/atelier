@@ -659,6 +659,64 @@ impl Command for FlattenDocument {
     }
 }
 
+/// Merge specific top-level layers into one pre-built raster (Merge Visible —
+/// spec 0042), leaving the others in place. `targets` must be root children;
+/// the raster is inserted at the top. App composites the pixels.
+#[derive(Debug)]
+pub struct MergeVisible {
+    raster_id: NodeId,
+    raster: Node,
+    targets: Vec<NodeId>,
+    removed: Vec<ExtractedSubtree>,
+    label: String,
+}
+
+impl MergeVisible {
+    pub fn new(doc: &mut Document, raster: Node, targets: Vec<NodeId>) -> Self {
+        Self {
+            raster_id: doc.alloc_id(),
+            raster,
+            targets,
+            removed: Vec::new(),
+            label: "Merge Visible".into(),
+        }
+    }
+}
+
+impl Command for MergeVisible {
+    fn label(&self) -> String {
+        self.label.clone()
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        let root = doc.root();
+        // Remove targets high-index-first so recorded indices are original.
+        let mut ordered: Vec<(NodeId, usize)> = self
+            .targets
+            .iter()
+            .filter_map(|&id| doc.children(root).iter().position(|&c| c == id).map(|i| (id, i)))
+            .collect();
+        ordered.sort_by_key(|&(_, i)| std::cmp::Reverse(i));
+        self.removed.clear();
+        for (id, _) in &ordered {
+            self.removed.push(doc.remove_subtree(*id).expect("target present"));
+        }
+        doc.insert_node(self.raster_id, self.raster.clone(), root, 0)
+            .expect("root accepts raster");
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        doc.remove_subtree(self.raster_id).expect("merged raster present");
+        let mut rem = std::mem::take(&mut self.removed);
+        // Restore ascending by original index so positions reconstruct.
+        rem.sort_by_key(|(_, _, index)| *index);
+        for (nodes, parent, index) in rem {
+            doc.restore_subtree(nodes, parent, index).expect("restore target");
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Group sibling nodes under a new group (DOC-2, spec 0028). All `ids` must
 /// share a parent. The group takes the position of the topmost member; members
 /// keep their relative order inside it.
@@ -1036,6 +1094,31 @@ mod tests {
         // Merge coalesces same-target edits (one undo per drag).
         let next = SetVectorShapes::new(&doc, id, edited);
         assert!(cmd.try_merge(next.as_any()));
+    }
+
+    #[test]
+    fn merge_visible_keeps_hidden_layers() {
+        let mut doc = Document::new([8, 8], ProjectFocus::Raster);
+        let root = doc.root();
+        let mut ids = Vec::new();
+        for n in ["v0", "h1", "v2"] {
+            let mut add = AddNode::new(&mut doc, leaf(n), root, usize::MAX);
+            add.apply(&mut doc);
+            ids.push(add.id);
+        }
+        // Children top-first now: [v2, h1, v0] (each added at end → order a,b,c).
+        // Use explicit visible targets v0 and v2; h1 stays.
+        let raster = leaf("Merged");
+        let mut cmd = MergeVisible::new(&mut doc, raster, vec![ids[0], ids[2]]);
+        let baseline = doc.clone();
+        cmd.apply(&mut doc);
+        let kids = doc.children(root).to_vec();
+        assert_eq!(kids.len(), 2, "two visible merged into one + h1 kept");
+        assert!(kids.contains(&ids[1]), "hidden layer h1 retained");
+        assert!(!kids.contains(&ids[0]) && !kids.contains(&ids[2]), "targets removed");
+
+        cmd.revert(&mut doc);
+        assert_eq!(doc, baseline, "revert restores exactly");
     }
 
     #[test]

@@ -726,6 +726,35 @@ impl AtelierApp {
         st.selected_extra.clear();
     }
 
+    /// Merge all visible top-level layers into one raster, keeping hidden ones
+    /// in place (spec 0042). No-op unless ≥2 visible top-level layers.
+    fn merge_visible(&mut self) {
+        use atelier_core::{LayerProps, Node, NodeKind, RasterContent, TileMap};
+        let Some(st) = &mut self.state else { return };
+        let root = st.editor.doc.root();
+        let targets: Vec<_> = st
+            .editor
+            .doc
+            .children(root)
+            .iter()
+            .copied()
+            .filter(|&c| st.editor.doc.node(c).is_some_and(|n| n.props.visible))
+            .collect();
+        if targets.len() < 2 {
+            return;
+        }
+        let [w, h] = st.editor.doc.size;
+        let rgba = atelier_raster::composite_rgba8(&st.editor.doc, w, h);
+        let raster = Node::new(
+            LayerProps::named("Merged"),
+            NodeKind::Raster(RasterContent { tiles: TileMap::from_rgba(w, h, &rgba), ..Default::default() }),
+        );
+        let cmd = atelier_core::command::MergeVisible::new(&mut st.editor.doc, raster, targets);
+        st.editor.apply(Box::new(cmd));
+        st.editor.selection = None;
+        st.selected_extra.clear();
+    }
+
     /// Flatten the whole document to a single raster layer (spec 0040).
     fn flatten_document(&mut self) {
         use atelier_core::{LayerProps, Node, NodeKind, RasterContent, TileMap};
@@ -1146,6 +1175,10 @@ impl AtelierApp {
                         .clicked()
                     {
                         self.merge_down();
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(has, egui::Button::new("Merge Visible")).clicked() {
+                        self.merge_visible();
                         ui.close_menu();
                     }
                     if ui.add_enabled(has, egui::Button::new("Flatten Image")).clicked() {
@@ -2416,6 +2449,38 @@ mod ui_tests {
             h.state().state.as_ref().unwrap().editor.doc.node_count(),
             n0,
             "undo restored both layers"
+        );
+    }
+
+    /// Spec 0042: merge visible layers into one, keeping a hidden layer.
+    #[test]
+    fn merge_visible_keeps_hidden_and_undoes() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer"); // v0
+        click_label(&mut h, "+ Layer"); // v1
+        click_label(&mut h, "+ Layer"); // hidden
+        let hidden = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            st.editor.doc.node_mut(hidden).unwrap().props.visible = false;
+        }
+        h.run();
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count(); // root+3
+
+        h.state_mut().merge_visible();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            // 2 visible → 1 merged; hidden kept → root + (merged + hidden) = 3.
+            assert_eq!(st.editor.doc.node_count(), n0 - 1, "two visible merged");
+            assert!(st.editor.doc.node(hidden).is_some(), "hidden layer retained");
+        }
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0,
+            "undo restored all layers"
         );
     }
 
