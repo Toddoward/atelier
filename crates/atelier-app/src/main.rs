@@ -147,9 +147,6 @@ pub struct EditorState {
     pub mask_edit: bool,
     /// Live mask stroke: (layer, pre-stroke mask snapshot, last doc point).
     pub mask_stroke: Option<(NodeId, atelier_core::Mask, [f32; 2])>,
-    /// Copy/paste source node (same document). Paste deep-clones it fresh each
-    /// time (spec 0030).
-    pub clipboard: Option<NodeId>,
     /// In-progress pen path anchors in doc space (spec 0016).
     pub pen_points: Vec<[f32; 2]>,
     /// Active direct-select anchor drag: (shape index, anchor index) (spec 0017).
@@ -199,6 +196,12 @@ struct AtelierApp {
     viewport: Viewport,
     adapter_info: String,
     state: Option<EditorState>,
+    /// Open-but-inactive documents (spec 0058). `switch_doc` swaps with `state`
+    /// in place (the outgoing doc takes the incoming one's slot).
+    background: Vec<EditorState>,
+    /// Cross-document layer clipboard: an owned subtree snapshot (source-doc id
+    /// space); paste re-ids it into the active document (spec 0058).
+    clipboard: Option<Vec<(NodeId, atelier_core::Node)>>,
     new_doc: Option<NewDocDialog>,
     /// Image → Canvas Size… dialog (pending width/height).
     canvas_size: Option<[u32; 2]>,
@@ -245,6 +248,8 @@ impl AtelierApp {
             viewport: Viewport::default(),
             adapter_info,
             state: None,
+            background: Vec::new(),
+            clipboard: None,
             new_doc: None,
             canvas_size: None,
             adjust_dialog: None,
@@ -289,6 +294,7 @@ impl AtelierApp {
     fn open_from(&mut self, path: PathBuf) {
         match atelier_io::load_atl(&path) {
             Ok(doc) => {
+                self.stash_active();
                 self.state = Some(EditorState {
                     editor: Editor::from_document(doc),
                     path: Some(path),
@@ -306,7 +312,6 @@ impl AtelierApp {
                     pattern: None,
                     mask_edit: false,
                     mask_stroke: None,
-                    clipboard: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
                     selected_anchor: None,
@@ -854,20 +859,23 @@ impl AtelierApp {
         }
     }
 
-    /// Copy the selected layer (remembers the source node for paste).
+    /// Copy the selected layer: an owned subtree snapshot that survives doc
+    /// switches and doc closes (spec 0030/0058).
     fn copy_selected_layer(&mut self) {
-        if let Some(st) = &mut self.state {
-            st.clipboard = st.editor.selection;
+        if let Some(st) = &self.state {
+            if let Some(sel) = st.editor.selection {
+                if let Some(snap) = st.editor.doc.snapshot_subtree(sel) {
+                    self.clipboard = Some(snap);
+                }
+            }
         }
     }
 
-    /// Paste a fresh deep copy of the clipboard layer above the selection.
+    /// Paste the clipboard subtree above the selection — same path for in-doc
+    /// and cross-doc paste: re-id the snapshot into the active document.
     fn paste_layer(&mut self) {
         let Some(st) = &mut self.state else { return };
-        let Some(src) = st.clipboard else { return };
-        if st.editor.doc.node(src).is_none() {
-            return; // source gone
-        }
+        let Some(snap) = &self.clipboard else { return };
         let doc = &st.editor.doc;
         let (parent, index) = match st.editor.selection.and_then(|s| doc.node(s).map(|n| (s, n))) {
             Some((sel, n)) => {
@@ -877,12 +885,40 @@ impl AtelierApp {
             }
             None => (doc.root(), 0),
         };
-        let Some((root, nodes)) = st.editor.doc.clone_subtree(src, parent) else { return };
+        let Some((root, nodes)) = st.editor.doc.import_subtree(snap, parent) else { return };
         let cmd =
             atelier_core::command::InsertSubtree::new(root, nodes, parent, index, "Paste Layer");
         st.editor.apply(Box::new(cmd));
         st.editor.selection = Some(root);
         st.selected_extra.clear();
+    }
+
+    /// Swap the active document with `background[i]` (spec 0058).
+    fn switch_doc(&mut self, i: usize) {
+        if i >= self.background.len() {
+            return;
+        }
+        if let Some(active) = self.state.as_mut() {
+            std::mem::swap(active, &mut self.background[i]);
+        } else {
+            self.state = Some(self.background.remove(i));
+        }
+        self.viewport = Viewport::default();
+    }
+
+    /// Close the active document; the most recent background doc takes over.
+    fn close_document(&mut self) {
+        self.state = None;
+        if !self.background.is_empty() {
+            self.state = Some(self.background.remove(0));
+        }
+    }
+
+    /// Park the current document in the background (before New/Open replace it).
+    fn stash_active(&mut self) {
+        if let Some(old) = self.state.take() {
+            self.background.insert(0, old);
+        }
     }
 
     /// Duplicate the selected layer (deep copy with fresh ids) above itself.
@@ -1343,6 +1379,10 @@ impl AtelierApp {
                         self.export_image_dialog();
                         ui.close_menu();
                     }
+                    if ui.add_enabled(has_doc, egui::Button::new("Close Document")).clicked() {
+                        self.close_document();
+                        ui.close_menu();
+                    }
                     ui.separator();
                     if ui.button("Exit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1620,7 +1660,7 @@ impl AtelierApp {
                     }
                     ui.separator();
                     let has_sel = self.state.as_ref().is_some_and(|s| s.editor.selection.is_some());
-                    let has_clip = self.state.as_ref().is_some_and(|s| s.clipboard.is_some());
+                    let has_clip = self.clipboard.is_some();
                     if ui.add_enabled(has_sel, egui::Button::new("Fill with Color")).clicked() {
                         self.fill_selection();
                         ui.close_menu();
@@ -1650,6 +1690,33 @@ impl AtelierApp {
                 });
             });
         });
+
+        // Document tab strip (spec 0058) — shown when more than one doc is open.
+        if !self.background.is_empty() {
+            let name = |st: &EditorState| -> String {
+                st.path
+                    .as_ref()
+                    .and_then(|p| p.file_stem())
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Untitled".into())
+            };
+            let mut switch_to: Option<usize> = None;
+            egui::TopBottomPanel::top("doc_tabs").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(st) = &self.state {
+                        let _ = ui.selectable_label(true, name(st));
+                    }
+                    for (i, st) in self.background.iter().enumerate() {
+                        if ui.selectable_label(false, name(st)).clicked() {
+                            switch_to = Some(i);
+                        }
+                    }
+                });
+            });
+            if let Some(i) = switch_to {
+                self.switch_doc(i);
+            }
+        }
     }
 
     fn modal_windows(&mut self, ctx: &egui::Context) {
@@ -1686,6 +1753,7 @@ impl AtelierApp {
         }
         if create {
             let dlg = self.new_doc.take().expect("dialog open");
+            self.stash_active();
             self.state = Some(EditorState {
                 editor: Editor::new([dlg.width, dlg.height], dlg.focus),
                 path: None,
@@ -1703,7 +1771,6 @@ impl AtelierApp {
                     pattern: None,
                     mask_edit: false,
                     mask_stroke: None,
-                    clipboard: None,
                     pen_points: Vec::new(),
                     anchor_drag: None,
                     selected_anchor: None,
@@ -2512,6 +2579,93 @@ mod ui_tests {
             ),
             "locked layer: convert-to-smart is a no-op"
         );
+    }
+
+    /// Spec 0058 (INT-4): copy/paste across documents, both directions, both
+    /// content kinds; switching tabs keeps documents intact.
+    #[test]
+    fn cross_document_copy_paste_pixels_and_paths() {
+        use atelier_core::{LayerProps, Node, NodeKind, PlaceholderArt, RasterContent};
+        let mut h = harness();
+        // Doc A: raster layer with known pixels.
+        create_doc(&mut h);
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            let node = Node::new(
+                LayerProps::named("pixels"),
+                NodeKind::Raster(RasterContent::from_placeholder(PlaceholderArt {
+                    bounds: [0.0, 0.0, 8.0, 8.0],
+                    color: [1.0, 0.0, 0.0, 1.0],
+                })),
+            );
+            let cmd = atelier_core::command::AddNode::new(&mut st.editor.doc, node, root, 0);
+            let id = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(id);
+        }
+        h.state_mut().copy_selected_layer();
+
+        // Doc B via File>New: A parks in the background.
+        create_doc(&mut h);
+        assert_eq!(h.state().background.len(), 1, "doc A parked");
+        let n0 = h.state().state.as_ref().unwrap().editor.doc.node_count();
+
+        h.state_mut().paste_layer();
+        h.run();
+        {
+            let st = h.state().state.as_ref().unwrap();
+            assert_eq!(st.editor.doc.node_count(), n0 + 1, "pasted into doc B");
+            let pasted = st.editor.selection.unwrap();
+            match &st.editor.doc.node(pasted).unwrap().kind {
+                NodeKind::Raster(c) => {
+                    assert_eq!(c.tiles.pixel(3, 3), [255, 0, 0, 255], "pixels crossed docs")
+                }
+                _ => panic!("raster expected"),
+            }
+        }
+        send_key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            n0,
+            "cross-doc paste undoable"
+        );
+
+        // Vector layer in B → paste into A (reverse direction, path content).
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            let root = st.editor.doc.root();
+            use atelier_core::atelier_vector::{Path, Shape};
+            let content = atelier_core::VectorContent {
+                shapes: vec![Shape::filled(Path::rect(1.0, 1.0, 5.0, 5.0), [0.0, 1.0, 0.0, 1.0])],
+            };
+            let cmd = atelier_core::command::AddNode::new(
+                &mut st.editor.doc,
+                Node::new(LayerProps::named("vec"), NodeKind::Vector(content)),
+                root,
+                0,
+            );
+            let id = cmd.id;
+            st.editor.apply(Box::new(cmd));
+            st.editor.selection = Some(id);
+        }
+        h.state_mut().copy_selected_layer();
+        let a_count = h.state().background[0].editor.doc.node_count();
+        h.state_mut().switch_doc(0);
+        h.run();
+        assert_eq!(
+            h.state().state.as_ref().unwrap().editor.doc.node_count(),
+            a_count,
+            "doc A intact after tab switch"
+        );
+        h.state_mut().paste_layer();
+        h.run();
+        let st = h.state().state.as_ref().unwrap();
+        let pasted = st.editor.selection.unwrap();
+        match &st.editor.doc.node(pasted).unwrap().kind {
+            NodeKind::Vector(c) => assert_eq!(c.shapes.len(), 1, "paths crossed docs"),
+            _ => panic!("vector expected"),
+        }
     }
 
     #[test]

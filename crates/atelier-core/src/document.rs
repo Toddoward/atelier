@@ -229,6 +229,46 @@ impl Document {
         Some((map[&id], out))
     }
 
+    /// Owned deep copy of the subtree at `id` (root first, ids/links as-is) —
+    /// the document-independent clipboard form (spec 0058). Pair with
+    /// [`import_subtree`] on the destination document.
+    pub fn snapshot_subtree(&self, id: NodeId) -> Option<Vec<(NodeId, Node)>> {
+        self.nodes.get(&id)?;
+        let mut out = Vec::new();
+        let mut stack = vec![id];
+        while let Some(c) = stack.pop() {
+            let n = self.nodes.get(&c).expect("subtree node").clone();
+            stack.extend(n.children.iter().copied());
+            out.push((c, n));
+        }
+        Some(out)
+    }
+
+    /// Import a foreign subtree (from [`snapshot_subtree`], possibly another
+    /// document): remap every id to a fresh local id, fix parent/child links,
+    /// re-parent the root under `new_parent`. Returns `(new_root, nodes)` ready
+    /// for `InsertSubtree`/[`restore_subtree`]. Spec 0058.
+    pub fn import_subtree(
+        &mut self,
+        nodes: &[(NodeId, Node)],
+        new_parent: NodeId,
+    ) -> Option<(NodeId, Vec<(NodeId, Node)>)> {
+        let root_old = nodes.first()?.0;
+        let mut map: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+        for (old, _) in nodes {
+            map.insert(*old, self.alloc_id());
+        }
+        let mut out = Vec::with_capacity(nodes.len());
+        for (old, node) in nodes {
+            let mut n = node.clone();
+            n.parent =
+                if *old == root_old { Some(new_parent) } else { n.parent.map(|p| map[&p]) };
+            n.children = n.children.iter().map(|c| map[c]).collect();
+            out.push((map[old], n));
+        }
+        Some((map[&root_old], out))
+    }
+
     /// Move `id` to `new_parent` at `new_index`. Returns the old `(parent, index)`.
     pub fn move_node(
         &mut self,
@@ -290,6 +330,41 @@ mod tests {
     fn insert_orders_children() {
         let (doc, ids) = doc_with(&["a", "b", "c"]);
         assert_eq!(doc.children(doc.root()), ids.as_slice());
+    }
+
+    /// Spec 0058: a snapshot from one document imports into another with fresh
+    /// ids (source ids collide with the target's), structure and pixels intact.
+    #[test]
+    fn import_subtree_remaps_ids_and_content() {
+        let (src, src_ids) = doc_with(&["group-content"]);
+        // Give the source layer a group wrapper + a pixel so content is checkable.
+        let (mut src, _) = (src, src_ids);
+        let g = src.alloc_id();
+        src.insert_node(g, Node::group("g"), src.root(), 0).unwrap();
+        let inner = src.alloc_id();
+        let mut inner_node = leaf("inner");
+        if let NodeKind::Raster(c) = &mut inner_node.kind {
+            c.tiles.fill_rect(0, 0, 4, 4, [7, 8, 9, 255]);
+        }
+        src.insert_node(inner, inner_node, g, 0).unwrap();
+        let snap = src.snapshot_subtree(g).unwrap();
+
+        // Target has its own nodes occupying the same id range.
+        let (mut dst, _) = doc_with(&["x", "y", "z"]);
+        let n0 = dst.node_count();
+        let (new_root, nodes) = dst.import_subtree(&snap, dst.root()).unwrap();
+        assert!(dst.node(new_root).is_none(), "import allocates, does not insert");
+        for (id, _) in &nodes {
+            assert!(dst.node(*id).is_none(), "all imported ids are fresh in dst");
+        }
+        dst.restore_subtree(nodes, dst.root(), 0).unwrap();
+        assert_eq!(dst.node_count(), n0 + 2, "group + inner imported");
+        let kids = dst.children(new_root).to_vec();
+        assert_eq!(kids.len(), 1, "group structure preserved");
+        match &dst.node(kids[0]).unwrap().kind {
+            NodeKind::Raster(c) => assert_eq!(c.tiles.pixel(2, 2), [7, 8, 9, 255]),
+            _ => panic!("raster expected"),
+        }
     }
 
     #[test]

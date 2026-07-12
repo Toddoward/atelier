@@ -3,7 +3,33 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-07-12-ay (spec 0057 — Phase 4→10 stabilization review DONE)
+## Last session: 2026-07-12-az (specs 0057+0058 — stabilization review & INT-4 DONE; **Phase 5 complete**)
+
+### Done
+- **Spec 0058 ☑ (INT-4)** — multiple documents + cross-document paste. Core:
+  `Document::snapshot_subtree` (owned, doc-independent) + `import_subtree` (re-id into any
+  target doc). App: `background: Vec<EditorState>` + tab strip + `switch_doc` (swap) +
+  File→New/Open park the current doc + Close Document. Clipboard moved to app level as an
+  owned snapshot — **one unified paste path** for in-doc and cross-doc (old NodeId clipboard
+  and its special cases deleted). Pixels/paths/masks/smarts all cross via the same subtree
+  snapshot. core 46 + app 57 tests green. **Phase 5 gate met** (INT-1..4 ☑; INT-5 ☑ via
+  0044/0045).
+- **CI toolchain fix ☑** — GH runners picked up a newer rustc; future-compat
+  `float_literal_f32_fallback` fired under `-D warnings` on 10 unsuffixed `Stroke::new`
+  literals in canvas.rs → suffixed `_f32` (commit 49b3293). Local toolchain is older and
+  didn't show it — watch for this class on future CI runs.
+
+### Next
+1. **Phase 6 color management** (lcms2; liblcms2-dev on ubuntu CI or vendor — verify
+   cross-platform first; the big gated item).
+2. Later phases in order; Phase-10 remainder (edit smart-object contents, effects) waits per
+   D-15.
+
+### Watch out (additions)
+- Tab strip switches by **swap** (outgoing doc takes the incoming one's slot) — deterministic,
+  not MRU. Clipboard is app-level and survives closing its source doc (by design).
+
+## Previous session: 2026-07-12-ay (spec 0057 — Phase 4→10 stabilization review DONE)
 
 ### Done
 - **Spec 0057 ☑** — directed review of Phase 4→now (user flagged possible instability in the
