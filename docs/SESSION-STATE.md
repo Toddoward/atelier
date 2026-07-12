@@ -3,7 +3,40 @@
 > **Always current.** Update before ending any session (CLAUDE.md hard rule).
 > Cold start: read this, then ROADMAP.md, then the active spec.
 
-## Last session: 2026-06-14-ax (spec 0056 — non-destructive smart-object rotation DONE)
+## Last session: 2026-07-12-ay (spec 0057 — Phase 4→10 stabilization review DONE)
+
+### Done
+- **Spec 0057 ☑** — directed review of Phase 4→now (user flagged possible instability in the
+  Opus-era work) + fixes:
+  - **HIGH:** clip ("Clip to below") was raster-over-raster only while the UI offered it for
+    every kind — silent no-op on vector/smart, and a clipped vector above a raster base broke
+    the whole clip run. Fixed: clip runs now accept any content layer (Raster|Vector|Smart)
+    as base and member, via shared `blend_content` + `render_layer_isolated` (also deleted the
+    duplicated per-kind source construction). Raster-only docs take the identical path.
+  - **MED:** `apply_transform` smart branch skipped the `visible && !locked` guard; `convert_to_smart`
+    and `rasterize_selected_layer` ignored `locked`. All guarded now.
+  - **INFO:** invariants audit clean (core pure, commands-only mutations, wgpu confined,
+    CPU compositor source of truth). Phase-order deviation (0052–0056 pulled forward)
+    recorded as **D-15**; duplicate-D-13 numbering noted in DECISIONS.md.
+  - raster 52 + app 56 tests green (`clipping_mask_works_across_layer_kinds`,
+    `locked_layer_blocks_transform_convert_rasterize`), clippy clean, smoke clean.
+- Remaining known simplifications (deliberate, tracked): clipped **adjustment** layers ignored
+  (0057 finding 4); nearest-neighbour smart sampling; vectors rasterize at doc resolution
+  (0051); GPU parity gap for vector/smart/adjust arms (R-13).
+
+### Next
+1. **Resume phase order per D-15**: Phase 5 remainder — **INT-4 cross-paste** (needs
+   multi-document support / editor-context work) closes Phase 5.
+2. Then Phase 6 color management (lcms2 — liblcms2-dev on ubuntu CI or vendor; big gated item).
+3. Backlog when their phases arrive: edit smart-object contents; bilinear smart sampling;
+   crisp-at-zoom vectors.
+
+### Watch out (additions)
+- Clip is now kind-generic across content layers — new content kinds must be added to
+  `is_content` in `composite_children` AND `blend_content`, or they silently drop out of
+  clip runs.
+
+## Previous session: 2026-06-14-ax (spec 0056 — non-destructive smart-object rotation DONE)
 
 ### Done
 - **Spec 0056 ☑** — smart objects rotate non-destructively. `SmartContent.rotation: f32`

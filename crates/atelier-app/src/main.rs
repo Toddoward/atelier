@@ -348,6 +348,11 @@ impl AtelierApp {
         use atelier_core::NodeKind;
         let Some(st) = &mut self.state else { return };
         let Some(id) = st.editor.selection else { return };
+        // Same editability rule as the raster path (spec 0057).
+        let ok = st.editor.doc.node(id).is_some_and(|n| n.props.visible && !n.props.locked);
+        if !ok {
+            return;
+        }
         // Smart objects transform non-destructively (spec 0055/0056): multiply the
         // current scale by the dialog's percentages and add its rotation, as one
         // undoable step.
@@ -1001,8 +1006,8 @@ impl AtelierApp {
         use atelier_core::{NodeKind, RasterContent};
         let Some(st) = &mut self.state else { return };
         let Some(id) = st.editor.selection else { return };
-        let (content, [w, h]) = match st.editor.doc.node(id).map(|n| &n.kind) {
-            Some(NodeKind::Vector(c)) => (c.clone(), st.editor.doc.size),
+        let (content, [w, h]) = match st.editor.doc.node(id).map(|n| (&n.kind, &n.props)) {
+            Some((NodeKind::Vector(c), p)) if !p.locked => (c.clone(), st.editor.doc.size),
             _ => return,
         };
         let tiles = atelier_raster::rasterize_vector(&content, w, h);
@@ -1024,7 +1029,7 @@ impl AtelierApp {
         let Some(st) = &mut self.state else { return };
         let Some(id) = st.editor.selection else { return };
         let Some(node) = st.editor.doc.node(id) else { return };
-        if node.kind.is_group() || matches!(node.kind, NodeKind::Smart(_)) {
+        if node.kind.is_group() || matches!(node.kind, NodeKind::Smart(_)) || node.props.locked {
             return;
         }
         let inner_kind = node.kind.clone();
@@ -2464,6 +2469,49 @@ mod ui_tests {
             }
             _ => panic!("smart expected"),
         }
+    }
+
+    /// Spec 0057: locked layers block transform (incl. smart), convert-to-smart,
+    /// and rasterize.
+    #[test]
+    fn locked_layer_blocks_transform_convert_rasterize() {
+        let mut h = harness();
+        create_doc(&mut h);
+        click_label(&mut h, "+ Layer");
+        h.state_mut().convert_to_smart();
+        h.run();
+        let sel = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            st.editor.doc.node_mut(sel).unwrap().props.locked = true;
+        }
+        let len0 = h.state().state.as_ref().unwrap().editor.history.applied_len();
+
+        h.state_mut().apply_transform(200.0, 200.0, 45.0);
+        h.run();
+        let st = h.state().state.as_ref().unwrap();
+        assert_eq!(st.editor.history.applied_len(), len0, "locked smart: transform is a no-op");
+        match &st.editor.doc.node(sel).unwrap().kind {
+            atelier_core::NodeKind::Smart(c) => assert_eq!(c.scale, [1.0, 1.0]),
+            _ => panic!("smart expected"),
+        }
+
+        // Locked raster blocks convert_to_smart.
+        click_label(&mut h, "+ Layer");
+        let r = h.state().state.as_ref().unwrap().editor.selection.unwrap();
+        {
+            let st = h.state_mut().state.as_mut().unwrap();
+            st.editor.doc.node_mut(r).unwrap().props.locked = true;
+        }
+        h.state_mut().convert_to_smart();
+        h.run();
+        assert!(
+            matches!(
+                h.state().state.as_ref().unwrap().editor.doc.node(r).unwrap().kind,
+                atelier_core::NodeKind::Raster(_)
+            ),
+            "locked layer: convert-to-smart is a no-op"
+        );
     }
 
     #[test]

@@ -174,18 +174,18 @@ fn adjust_backdrop(backdrop: &mut Buffer, adj: atelier_core::Adjustment, opacity
     }
 }
 
-/// Composite one node directly onto the backdrop (no clip handling).
-fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
-    let Some(node) = doc.node(id) else { return };
-    let props = &node.props;
-    match &node.kind {
+/// Blend one content layer's pixels (Raster/Vector/Smart) onto `backdrop` with
+/// the given mode/opacity. Shared by the direct path (layer's own blend) and the
+/// isolated clip path (Normal at own opacity) — spec 0057.
+fn blend_content(kind: &NodeKind, backdrop: &mut Buffer, mode: BlendMode, opacity: f32) {
+    match kind {
         NodeKind::Raster(content) => {
             let src = TileSource {
                 tiles: &content.tiles,
                 offset: content.offset,
                 mask: content.mask.as_ref(),
             };
-            blend_onto(backdrop, &src, props.blend, props.opacity);
+            blend_onto(backdrop, &src, mode, opacity);
         }
         NodeKind::Vector(content) => {
             // Rasterize the vector layer (doc space, up to the region's far edge)
@@ -195,8 +195,34 @@ fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
             let h = (backdrop.origin[1] + backdrop.h as i32).max(0) as u32;
             let vt = crate::rasterize_vector(content, w, h);
             let src = TileSource { tiles: &vt, offset: [0, 0], mask: None };
-            blend_onto(backdrop, &src, props.blend, props.opacity);
+            blend_onto(backdrop, &src, mode, opacity);
         }
+        NodeKind::Smart(content) => {
+            // Composite the embedded document at its native resolution into its
+            // own buffer, then blend through an affine nearest-neighbour source
+            // (centre pivot) placed at `offset` (spec 0052/0055/0056). Recursion
+            // via composite_children supports nested groups/clips/vectors/smarts;
+            // resampling the embedded source each frame keeps it non-destructive.
+            let [dw, dh] = content.doc.size;
+            let mut inner = Buffer::transparent(dw as usize, dh as usize, [0, 0]);
+            let root = content.doc.root();
+            composite_children(&content.doc, root, &mut inner);
+            if let Some(inv) = AffineSource::inverse(content.scale, content.rotation) {
+                let center = [dw as f32 / 2.0, dh as f32 / 2.0];
+                let src = AffineSource { buf: &inner, offset: content.offset, center, inv };
+                blend_onto(backdrop, &src, mode, opacity);
+            }
+        }
+        // Group/Adjustment handled by composite_node; text/fill: later phases.
+        _ => {}
+    }
+}
+
+/// Composite one node directly onto the backdrop (no clip handling).
+fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
+    let Some(node) = doc.node(id) else { return };
+    let props = &node.props;
+    match &node.kind {
         NodeKind::Adjustment(adj) => {
             adjust_backdrop(backdrop, *adj, props.opacity);
         }
@@ -209,49 +235,34 @@ fn composite_node(doc: &Document, id: NodeId, backdrop: &mut Buffer) {
                 blend_onto(backdrop, &BufferSource(&isolated), props.blend, props.opacity);
             }
         }
-        NodeKind::Smart(content) => {
-            // Composite the embedded document at its native resolution into its
-            // own buffer, then blend through a scaled nearest-neighbour source
-            // placed at `offset` (spec 0052/0055). Recursion via composite_children
-            // supports nested groups/clips/vectors/smarts. Scaling resamples the
-            // embedded source each frame, so it's non-destructive.
-            let [dw, dh] = content.doc.size;
-            let mut inner = Buffer::transparent(dw as usize, dh as usize, [0, 0]);
-            let root = content.doc.root();
-            composite_children(&content.doc, root, &mut inner);
-            if let Some(inv) = AffineSource::inverse(content.scale, content.rotation) {
-                let center = [dw as f32 / 2.0, dh as f32 / 2.0];
-                let src = AffineSource { buf: &inner, offset: content.offset, center, inv };
-                blend_onto(backdrop, &src, props.blend, props.opacity);
-            }
-        }
-        // text/fill: later phases.
-        _ => {}
+        kind => blend_content(kind, backdrop, props.blend, props.opacity),
     }
 }
 
-/// Render a raster layer into its own transparent buffer (own opacity, Normal).
-fn render_raster_isolated(doc: &Document, id: NodeId, w: usize, h: usize, origin: [i32; 2]) -> Buffer {
+/// Render a content layer (Raster/Vector/Smart) into its own transparent buffer
+/// (own opacity, Normal) — the isolated form the clip path composites from.
+fn render_layer_isolated(doc: &Document, id: NodeId, w: usize, h: usize, origin: [i32; 2]) -> Buffer {
     let mut buf = Buffer::transparent(w, h, origin);
-    if let Some(NodeKind::Raster(content)) = doc.node(id).map(|n| &n.kind) {
-        let src = TileSource {
-            tiles: &content.tiles,
-            offset: content.offset,
-            mask: content.mask.as_ref(),
-        };
-        let opacity = doc.node(id).expect("present").props.opacity;
-        blend_onto(&mut buf, &src, BlendMode::Normal, opacity);
+    if let Some(node) = doc.node(id) {
+        blend_content(&node.kind, &mut buf, BlendMode::Normal, node.props.opacity);
     }
     buf
 }
 
 /// Children are stored top-first (panel order); painter's algorithm wants
-/// bottom-first. Clipping masks (DOC-4): a run of `clip` raster layers above a
-/// raster base is masked by the base's alpha (spec 0046).
+/// bottom-first. Clipping masks (DOC-4): a run of `clip` content layers above a
+/// content base (Raster/Vector/Smart) is masked by the base's alpha (spec
+/// 0046; generalized beyond rasters in spec 0057).
 fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
     let kids: Vec<NodeId> = doc.children(parent).iter().rev().copied().collect();
     let visible = |id: NodeId| doc.node(id).is_some_and(|n| n.props.visible);
-    let is_raster = |id: NodeId| matches!(doc.node(id).map(|n| &n.kind), Some(NodeKind::Raster(_)));
+    // Layers with pixels of their own — valid clip bases and clip members.
+    let is_content = |id: NodeId| {
+        matches!(
+            doc.node(id).map(|n| &n.kind),
+            Some(NodeKind::Raster(_) | NodeKind::Vector(_) | NodeKind::Smart(_))
+        )
+    };
     let mut i = 0;
     while i < kids.len() {
         let id = kids[i];
@@ -260,8 +271,8 @@ fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
             continue;
         }
         let clipped = doc.node(id).expect("present").props.clip;
-        // A raster base (clip=false) may carry a run of clip raster layers.
-        if is_raster(id) && !clipped {
+        // A content base (clip=false) may carry a run of clip content layers.
+        if is_content(id) && !clipped {
             let mut clips = Vec::new();
             let mut j = i + 1;
             while j < kids.len() {
@@ -269,7 +280,7 @@ fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
                     j += 1;
                     continue;
                 }
-                if doc.node(kids[j]).expect("present").props.clip && is_raster(kids[j]) {
+                if doc.node(kids[j]).expect("present").props.clip && is_content(kids[j]) {
                     clips.push(kids[j]);
                     j += 1;
                 } else {
@@ -281,10 +292,10 @@ fn composite_children(doc: &Document, parent: NodeId, backdrop: &mut Buffer) {
                 i += 1;
             } else {
                 let (w, h, origin) = (backdrop.w, backdrop.h, backdrop.origin);
-                let mut base = render_raster_isolated(doc, id, w, h, origin);
+                let mut base = render_layer_isolated(doc, id, w, h, origin);
                 let base_alpha: Vec<f32> = base.px.iter().map(|p| p[3]).collect();
                 for c in clips {
-                    let mut cb = render_raster_isolated(doc, c, w, h, origin);
+                    let mut cb = render_layer_isolated(doc, c, w, h, origin);
                     for (k, p) in cb.px.iter_mut().enumerate() {
                         p[3] *= base_alpha[k]; // clip to base coverage
                     }
@@ -490,6 +501,41 @@ mod tests {
         // 90° about centre (2,2): embedded (3,0) lands at parent (3,3).
         assert_eq!(px(&out, 8, 3, 3), [255, 0, 0, 255], "marker rotated to (3,3)");
         assert_eq!(px(&out, 8, 3, 0), [0, 0, 0, 0], "marker left its original cell");
+    }
+
+    /// Spec 0057: clip runs work across layer kinds, not just raster-over-raster.
+    #[test]
+    fn clipping_mask_works_across_layer_kinds() {
+        use atelier_core::atelier_vector::{Path, Shape};
+        use atelier_core::VectorContent;
+        let vec_layer = |x: f32, y: f32, w: f32, h: f32, color: [f32; 4]| {
+            Node::new(
+                LayerProps::named("v"),
+                NodeKind::Vector(VectorContent {
+                    shapes: vec![Shape::filled(Path::rect(x, y, w, h), color)],
+                }),
+            )
+        };
+
+        // Case 1: clipped RASTER over a VECTOR base (left half of the canvas).
+        let mut doc = Document::new([8, 8], ProjectFocus::Raster);
+        let root = doc.root();
+        add(&mut doc, vec_layer(0.0, 0.0, 4.0, 8.0, [0.0, 1.0, 0.0, 1.0]), root, 0);
+        let red = add(&mut doc, solid_layer("red", [0.0, 0.0, 8.0, 8.0], [1.0, 0.0, 0.0, 1.0]), root, 0);
+        doc.node_mut(red).unwrap().props.clip = true;
+        let out = composite_rgba8(&doc, 8, 8);
+        assert_eq!(px(&out, 8, 1, 1), [255, 0, 0, 255], "red clips onto vector base");
+        assert_eq!(px(&out, 8, 6, 1), [0, 0, 0, 0], "clipped where vector base is empty");
+
+        // Case 2: clipped VECTOR over a RASTER base (left half of the canvas).
+        let mut doc2 = Document::new([8, 8], ProjectFocus::Raster);
+        let root2 = doc2.root();
+        add(&mut doc2, solid_layer("base", [0.0, 0.0, 4.0, 8.0], [0.0, 0.0, 1.0, 1.0]), root2, 0);
+        let vid = add(&mut doc2, vec_layer(0.0, 0.0, 8.0, 8.0, [1.0, 1.0, 0.0, 1.0]), root2, 0);
+        doc2.node_mut(vid).unwrap().props.clip = true;
+        let out2 = composite_rgba8(&doc2, 8, 8);
+        assert_eq!(px(&out2, 8, 1, 1), [255, 255, 0, 255], "vector clips onto raster base");
+        assert_eq!(px(&out2, 8, 6, 1), [0, 0, 0, 0], "clipped where raster base is empty");
     }
 
     #[test]
