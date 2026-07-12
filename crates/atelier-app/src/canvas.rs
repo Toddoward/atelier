@@ -859,7 +859,7 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
     painter.rect_stroke(
         doc_rect,
         0.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(200)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(200)),
         egui::StrokeKind::Outside,
     );
 
@@ -879,8 +879,8 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
             };
             for (a, b) in segs {
                 let (pa, pb) = (to_screen(*a), to_screen(*b));
-                painter.line_segment([pa, pb], egui::Stroke::new(2.0, egui::Color32::BLACK));
-                painter.line_segment([pa, pb], egui::Stroke::new(1.0, egui::Color32::WHITE));
+                painter.line_segment([pa, pb], egui::Stroke::new(2.0_f32, egui::Color32::BLACK));
+                painter.line_segment([pa, pb], egui::Stroke::new(1.0_f32, egui::Color32::WHITE));
             }
         }
     } else {
@@ -891,7 +891,7 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
             let s = vp.doc_to_screen(p);
             rect.min + egui::vec2(s[0], s[1])
         };
-        let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(230));
+        let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(230));
         match state.tool {
             ActiveTool::SelectRect
             | ActiveTool::ShapeRect
@@ -929,7 +929,7 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
                     for a in sh.path.anchors() {
                         let p = to_screen(a);
                         painter.circle_filled(p, 3.5, egui::Color32::WHITE);
-                        painter.circle_stroke(p, 3.5, egui::Stroke::new(1.0, accent));
+                        painter.circle_stroke(p, 3.5, egui::Stroke::new(1.0_f32, accent));
                     }
                 }
                 // Handles for the selected anchor (drag targets).
@@ -943,7 +943,7 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
                                 .flatten()
                             {
                                 let hs = to_screen(hp);
-                                painter.line_segment([aps, hs], egui::Stroke::new(1.0, accent));
+                                painter.line_segment([aps, hs], egui::Stroke::new(1.0_f32, accent));
                                 painter.circle_filled(hs, 3.0, accent);
                             }
                         }
@@ -959,20 +959,20 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
             let s = vp.doc_to_screen(p);
             rect.min + egui::vec2(s[0], s[1])
         };
-        let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(90, 170, 255));
+        let stroke = egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(90, 170, 255));
         let pts: Vec<egui::Pos2> = state.pen_points.iter().map(|&p| to_screen(p)).collect();
         if pts.len() >= 2 {
             painter.add(egui::Shape::line(pts.clone(), stroke));
         }
         for p in &pts {
             painter.circle_filled(*p, 3.0, egui::Color32::WHITE);
-            painter.circle_stroke(*p, 3.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+            painter.circle_stroke(*p, 3.0, egui::Stroke::new(1.0_f32, egui::Color32::BLACK));
         }
         if let Some(cur) = ui.input(|i| i.pointer.latest_pos()) {
             if rect.contains(cur) {
                 painter.line_segment(
                     [*pts.last().expect("non-empty"), cur],
-                    egui::Stroke::new(1.0, egui::Color32::from_gray(160)),
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_gray(160)),
                 );
             }
         }
@@ -991,7 +991,7 @@ fn paint_document(ui: &egui::Ui, rect: egui::Rect, vp: &Viewport, state: &mut Ed
                 painter.rect_stroke(
                     r,
                     0.0,
-                    egui::Stroke::new(1.5, egui::Color32::from_rgb(90, 170, 255)),
+                    egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(90, 170, 255)),
                     egui::StrokeKind::Outside,
                 );
             }
