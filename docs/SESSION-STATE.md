@@ -19,11 +19,17 @@
   literals in canvas.rs → suffixed `_f32` (commit 49b3293). Local toolchain is older and
   didn't show it — watch for this class on future CI runs.
 
+### Done (continued, same session)
+- **Spec 0059 ☑** — Phase 6 opened: `atelier-color` is a real lcms2 wrapper (`Profile::srgb`/
+  `from_icc`, `convert_rgba8` in-place with alpha passthrough, `srgb_to_lab`). ΔE76 reference
+  tests + identity round-trip green. **The platform gate dissolved**: lcms2-sys compiles its
+  vendored C source, so no liblcms2-dev needed on any CI runner. color 3 tests green.
+
 ### Next
-1. **Phase 6 color management** (lcms2; liblcms2-dev on ubuntu CI or vendor — verify
-   cross-platform first; the big gated item).
-2. Later phases in order; Phase-10 remainder (edit smart-object contents, effects) waits per
-   D-15.
+1. **Phase 6 remainder**: assign/convert document profile (menu + `color_mode` becomes real),
+   display-profile transform in the canvas present path, color picker/swatches (COL-5,6).
+2. Then Phase 7 remainder (SVG import, ICC in raster formats, `.atl` freeze), Phase 8 PSD.
+3. Phase-10 remainder (edit smart-object contents, effects) waits per D-15.
 
 ### Watch out (additions)
 - Tab strip switches by **swap** (outgoing doc takes the incoming one's slot) — deterministic,

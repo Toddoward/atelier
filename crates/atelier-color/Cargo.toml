@@ -7,3 +7,6 @@ license.workspace = true
 [dependencies]
 thiserror = { workspace = true }
 atelier-core = { workspace = true }
+# Only atelier-color may import lcms2 (architecture invariant). The sys crate
+# builds its vendored C source when pkg-config finds no system liblcms2.
+lcms2 = "6"
